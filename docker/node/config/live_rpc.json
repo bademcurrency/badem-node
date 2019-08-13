@@ -1,7 +1,7 @@
 {
     "version": "1",
     "address": "::ffff:0.0.0.0",
-    "port": "7076",
+    "port": "2225",
     "enable_control": "true",
     "max_json_depth": "20",
     "max_request_size": "33554432",

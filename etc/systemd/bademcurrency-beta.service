@@ -1,0 +1,13 @@
+[Unit]
+Description=Badem Daemon beta network
+After=network.target
+
+[Service]
+Type=simple
+User=bademcurrency
+WorkingDirectory=/var/bademcurrency/BademBeta
+ExecStart=/usr/bin/badem_node-beta --daemon
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

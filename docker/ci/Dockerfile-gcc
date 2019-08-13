@@ -1,4 +1,4 @@
-FROM nanocurrency/nano-env:base
+FROM bademcurrency/badem-env:base
 
 RUN apt-get install -yqq librocksdb-dev
 

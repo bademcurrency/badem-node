@@ -1,4 +1,4 @@
-## Nano CI config
+## Badem CI config
 
 image: ubuntu:xenial
 

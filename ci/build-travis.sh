@@ -18,22 +18,22 @@ else
 fi
 
 if [[ ${ASAN_INT-0} -eq 1 ]]; then
-    SANITIZERS="-DNANO_ASAN_INT=ON"
+    SANITIZERS="-DBADEM_ASAN_INT=ON"
 elif [[ ${ASAN-0} -eq 1 ]]; then
-    SANITIZERS="-DNANO_ASAN=ON"
+    SANITIZERS="-DBADEM_ASAN=ON"
 elif [[ ${TSAN-0} -eq 1 ]]; then
-    SANITIZERS="-DNANO_TSAN=ON"
+    SANITIZERS="-DBADEM_TSAN=ON"
 else
     SANITIZERS=""
 fi
 
 cmake \
     -G'Unix Makefiles' \
-    -DACTIVE_NETWORK=nano_test_network \
-    -DNANO_TEST=ON \
-    -DNANO_GUI=ON \
-    -DNANO_ROCKSDB=ON \
-    -DNANO_WARN_TO_ERR=ON \
+    -DACTIVE_NETWORK=badem_test_network \
+    -DBADEM_TEST=ON \
+    -DBADEM_GUI=ON \
+    -DBADEM_ROCKSDB=ON \
+    -DBADEM_WARN_TO_ERR=ON \
     -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
     -DCMAKE_VERBOSE_MAKEFILE=ON \
     -DBOOST_ROOT=/usr/local \

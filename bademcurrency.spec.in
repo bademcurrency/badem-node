@@ -1,0 +1,64 @@
+Name:                   bademcurrency
+Version:                @VERSION@ 
+Release:                @RELEASE@%{?dist}
+Summary:                Bademcurrency Daemon
+License:                BSD-2-Clause
+URL:                    https://badem.io/
+Requires(pre):          /usr/sbin/useradd, /usr/bin/getent
+Requires(postun):       /usr/sbin/userdel
+BuildRequires:          make, libstdc++-static, glibc-devel, glibc-headers
+Source:                 badem-%{version}.tar.gz
+
+%description
+This is bademcurrency daemon.  Badem is a digital currency that is
+peer-to-peer, decentralized, and trustless. This package includes
+the badem daemon, and a service.
+
+%prep
+if [ ! -x "$(which cmake)" ]; then
+	echo "cmake must exist, try:" >&2
+	echo "      scl enable llvm-toolset-7 devtoolset-7 'rpmbuild ...'" >&2
+	exit 1
+fi
+if cc --std=c++14 --version 2>&1 >/dev/null | grep '^' >/dev/null; then
+	echo "Unsupported C++ compiler, try:" >&2
+	echo "      scl enable llvm-toolset-7 devtoolset-7 'rpmbuild ...'" >&2
+	exit 1
+fi
+if test ! -d /usr/local/boost; then
+	echo "Boost should be in /usr/local/boost" >&2
+	exit 1
+fi
+%autosetup -n badem-%{version}
+
+%build
+cmake -DCMAKE_VERBOSE_MAKEFILE=ON -DBOOST_ROOT=/usr/local/boost .
+make badem_node %{?_smp_mflags}
+
+%install
+if [ ! %{buildroot} = "/" ]; then %{__rm} -rf %{buildroot}; fi
+mkdir -p %{buildroot}/usr/bin
+mkdir -p %{buildroot}/etc/systemd/system/
+cp badem_node %{buildroot}/usr/bin/badem_node
+cp badem_rpc %{buildroot}/usr/bin/badem_rpc
+cp etc/systemd/bademcurrency.service %{buildroot}/etc/systemd/system/bademcurrency.service
+
+%clean
+if [ ! %{buildroot} = "/" ]; then %{__rm} -rf %{buildroot}; fi
+
+%files
+%defattr(755,root,root)
+%{_bindir}/badem_node
+%attr(644,root,root) /etc/systemd/system/bademcurrency.service
+
+%pre
+PATH="/usr/bin:/usr/sbin:/bin:/sbin:${PATH}"; export PATH
+mkdir -p /var/bademcurrency/Badem
+getent group bademcurrency >/dev/null || groupadd --system bademcurrency || exit 1
+getent passwd bademcurrency >/dev/null || useradd --system --create-home --home-dir /var/bademcurrency --shell /bin/bash --comment "Bademcurrency Daemon user" --gid bademcurrency bademcurrency || exit 1
+chown -R bademcurrency:bademcurrency /var/bademcurrency
+chmod 700 /var/bademcurrency
+
+%postun
+PATH="/usr/bin:/usr/sbin:/bin:/sbin:${PATH}"; export PATH
+userdel bademcurrency >/dev/null 2>/dev/null || :

@@ -21,8 +21,8 @@ fi
 
 cmake \
     -G'Unix Makefiles' \
-    -DACTIVE_NETWORK=nano_${NETWORK_CFG}_network \
-    -DNANO_GUI=ON \
+    -DACTIVE_NETWORK=badem_${NETWORK_CFG}_network \
+    -DBADEM_GUI=ON \
     -DCMAKE_BUILD_TYPE=${CONFIGURATION} \
     -DCMAKE_VERBOSE_MAKEFILE=ON \
     -DBOOST_ROOT=/usr/local \

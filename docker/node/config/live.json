@@ -7,14 +7,14 @@
         "max_work_generate_difficulty": "ffffffffc0000000",
         "child_process": {
             "enable": "false",
-            "rpc_path": "\/usr\/bin\/nano_rpc"
+            "rpc_path": "\/usr\/bin\/badem_rpc"
         }
     },
     "node": {
         "version": "17",
-        "peering_port": "7075",
+        "peering_port": "2224",
         "bootstrap_fraction_numerator": "1",
-        "receive_minimum": "1000000000000000000000000",
+        "receive_minimum": "1",
         "logging": {
             "version": "7",
             "ledger": "false",
@@ -42,18 +42,11 @@
         },
         "work_peers": "",
         "preconfigured_peers": [
-            "peering.nano.org"
+            "node.badem.io"
         ],
         "preconfigured_representatives": [
-            "nano_3arg3asgtigae3xckabaaewkx3bzsh7nwz7jkmjos79ihyaxwphhm6qgjps4",
-            "nano_1stofnrxuz3cai7ze75o174bpm7scwj9jn3nxsn8ntzg784jf1gzn1jjdkou",
-            "nano_1q3hqecaw15cjt7thbtxu3pbzr1eihtzzpzxguoc37bj1wc5ffoh7w74gi6p",
-            "nano_3dmtrrws3pocycmbqwawk6xs7446qxa36fcncush4s1pejk16ksbmakis78m",
-            "nano_3hd4ezdgsp15iemx7h81in7xz5tpxi43b6b41zn3qmwiuypankocw3awes5k",
-            "nano_1awsn43we17c1oshdru4azeqjz9wii41dy8npubm4rg11so7dx3jtqgoeahy",
-            "nano_1anrzcuwe64rwxzcco8dkhpyxpi8kd7zsjc1oeimpc3ppca4mrjtwnqposrs",
-            "nano_1hza3f7wiiqa7ig3jczyxj5yo86yegcmqk3criaz838j91sxcckpfhbhhra1"
-        ],
+            "bdm_38regm4qcthdwm9w5urp7o6cy6tj5cp14ekjhoptocp74nxinsd9bdhe3adu",
+            "bdm_3uuw7nzrnbp5d86ze4pefky1efq736kr94dbt4bnfszpwrxs7c7rezwqystt"        ],
         "online_weight_minimum": "60000000000000000000000000000000000000",
         "online_weight_quorum": "50",
         "password_fanout": "1024",
@@ -95,7 +88,7 @@
                 "version": "1",
                 "enable": "false",
                 "allow_unsafe": "false",
-                "path": "\/tmp\/nano",
+                "path": "\/tmp\/badem",
                 "io_timeout": "15"
             }
         },

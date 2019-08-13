@@ -1,0 +1,13 @@
+[Unit]
+Description=Badem Daemon live network
+After=network.target
+
+[Service]
+Type=simple
+User=bademcurrency
+WorkingDirectory=/var/bademcurrency/Badem
+ExecStart=/usr/bin/badem_node --daemon
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
