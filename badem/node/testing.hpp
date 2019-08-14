@@ -40,7 +40,7 @@ public:
 	 */
 	std::error_code poll (const std::chrono::nanoseconds & sleep_time = std::chrono::milliseconds (50));
 	void stop ();
-	void deadline_set (const std::chrono::duration<double, std::badem> & delta);
+	void deadline_set (const std::chrono::duration<double, std::milli> & delta);
 	std::shared_ptr<badem::node> add_node (badem::node_config const &, badem::node_flags = badem::node_flags (), badem::transport::transport_type = badem::transport::transport_type::tcp);
 	boost::asio::io_context io_ctx;
 	badem::alarm alarm{ io_ctx };
