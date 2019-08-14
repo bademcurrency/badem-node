@@ -159,7 +159,7 @@ badem::account badem::system::account (badem::transaction const & transaction_a,
 	return badem::account (result);
 }
 
-void badem::system::deadline_set (std::chrono::duration<double, std::badem> const & delta_a)
+void badem::system::deadline_set (std::chrono::duration<double, std::milli> const & delta_a)
 {
 	deadline = std::chrono::steady_clock::now () + delta_a * deadline_scaling_factor;
 }
