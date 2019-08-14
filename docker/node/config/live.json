@@ -46,7 +46,8 @@
         ],
         "preconfigured_representatives": [
             "bdm_38regm4qcthdwm9w5urp7o6cy6tj5cp14ekjhoptocp74nxinsd9bdhe3adu",
-            "bdm_3uuw7nzrnbp5d86ze4pefky1efq736kr94dbt4bnfszpwrxs7c7rezwqystt"        ],
+            "bdm_3uuw7nzrnbp5d86ze4pefky1efq736kr94dbt4bnfszpwrxs7c7rezwqystt"
+        ],
         "online_weight_minimum": "60000000000000000000000000000000000000",
         "online_weight_quorum": "50",
         "password_fanout": "1024",
