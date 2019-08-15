@@ -26,8 +26,8 @@ namespace
 {
 char const * test_private_key_data = "34F0A37AAD20F4A260F0A5B3CB3D7FB50673212263E58A380BC10474BB039CE4";
 char const * test_public_key_data = "B0311EA55708D6A53C75CDBF88300259C6D018522FE3D4D0A242E431F9E8B6D0"; // bdm_3e3j5tkog48pnny9dmfzj1r16pg8t1e76dz5tmac6iq689wyjfpiij4txtdo
-char const * beta_public_key_data = "A59A439B34662385D48F7FF9CA50030F889BAA9AC320EA5A85AAD777CF82B088"; // badem_3betagfmasj5iqcayzzssba185wamgobois1xbfadcpqgz9r7e6a1zwztn5o
-char const * live_public_key_data = "565936F0F5F7A41201FD3F831A52B6B1CDBB74AE2C3E8A590ABA08C048F111FA"; // bdm_1oks8urhdxx64a1zthw55bbdfegfqftcwd3yjbeiogiar36h46htzzkmmw3e
+char const * beta_public_key_data = "A59A439B34662385D48F7FF9CA50030F889BAA9AC320EA5A85AAD777CF82B088"; // bdm_3betagfmasj5iqcayzzssba185wamgobois1xbfadcpqgz9r7e6a1zwztn5o
+char const * live_public_key_data = "40C8E1D867DA316ED2404C8A69624FFCFF884B0ADBB26B58F7A0C27C0E044A34"; // bdm_1i8aw9e8hpjjfub61m6cf7j6zz9zj37iopxkffehha84hi91akjn1n9s51fg
 char const * test_genesis_data = R"%%%({
 	"type": "open",
 	"source": "B0311EA55708D6A53C75CDBF88300259C6D018522FE3D4D0A242E431F9E8B6D0",
@@ -48,11 +48,11 @@ char const * beta_genesis_data = R"%%%({
 
 char const * live_genesis_data = R"%%%({
 	"type": "open",
-	"source": "565936F0F5F7A41201FD3F831A52B6B1CDBB74AE2C3E8A590ABA08C048F111FA",
-	"representative": "bdm_1oks8urhdxx64a1zthw55bbdfegfqftcwd3yjbeiogiar36h46htzzkmmw3e",
-	"account": "bdm_1oks8urhdxx64a1zthw55bbdfegfqftcwd3yjbeiogiar36h46htzzkmmw3e",
-	"work": "948c664ac4c86930",
-	"signature": "378B2DCA3B4F2D196435C1EBB01A405A627E270AFE98C07042358BD379E4DFD8215E9C817E995787DFB4E06826115A4BA8F2DB6C79020DA4E85E0F4DD19B0606"
+	"source": "40C8E1D867DA316ED2404C8A69624FFCFF884B0ADBB26B58F7A0C27C0E044A34",
+	"representative": "bdm_1i8aw9e8hpjjfub61m6cf7j6zz9zj37iopxkffehha84hi91akjn1n9s51fg",
+	"account": "bdm_1i8aw9e8hpjjfub61m6cf7j6zz9zj37iopxkffehha84hi91akjn1n9s51fg",
+	"work": "e6bdfde84acdea33",
+	"signature": "2EA5AD03F2925707F25E1245E821042EEAFE8DEDD5E50A913B8E65DD13945B73654E63BDC8D23AA4B315BE60FE8E75103D00A95B24C6EA916A8A1145296C1903"
 	})%%%";
 }
 
