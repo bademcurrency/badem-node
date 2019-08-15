@@ -1,15 +1,21 @@
-FROM bademcurrency/badem-env:gcc
+FROM ubuntu:16.04
 
 ARG NETWORK=live
-ARG TRAVIS_TAG=DEV_BUILD
-ARG CI_BUILD=OFF
+
+ENV BOOST_ROOT=/tmp/boost_install
+
+ADD ci /tmp/ci
+ADD util /tmp/util
+
+RUN /tmp/util/build_prep/update-common && /tmp/util/build_prep/ubuntu/prep.sh
+
 ADD ./ /tmp/src
 
 RUN mkdir /tmp/build && \
     cd /tmp/build && \
-    cmake /tmp/src -DCI_BUILD=${CI_BUILD} -DBOOST_ROOT=${BOOST_ROOT} -DACTIVE_NETWORK=badem_${NETWORK}_network && \
-    make badem_node -j $(nproc) && \
-    make badem_rpc -j $(nproc) && \
+    cmake /tmp/src -DBOOST_ROOT=${BOOST_ROOT} -DACTIVE_NETWORK=badem_${NETWORK}_network && \
+    make badem_node && \
+    make badem_rpc && \
     cd .. && \
     echo ${NETWORK} > /etc/badem-network
 
@@ -21,6 +27,4 @@ COPY docker/node/entry.sh /entry.sh
 COPY docker/node/config /usr/share/badem/config
 RUN chmod +x /entry.sh
 RUN ln -s /usr/bin/badem_node /usr/bin/bdm_node
-ENV PATH="${PATH}:/usr/bin"
-ENTRYPOINT ["/bin/bash",  "/entry.sh"]
-CMD ["badem_node daemon -l"]
+CMD ["/bin/bash",  "/entry.sh"]
