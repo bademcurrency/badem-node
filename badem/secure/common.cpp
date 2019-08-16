@@ -27,7 +27,7 @@ namespace
 char const * test_private_key_data = "34F0A37AAD20F4A260F0A5B3CB3D7FB50673212263E58A380BC10474BB039CE4";
 char const * test_public_key_data = "B0311EA55708D6A53C75CDBF88300259C6D018522FE3D4D0A242E431F9E8B6D0"; // bdm_3e3j5tkog48pnny9dmfzj1r16pg8t1e76dz5tmac6iq689wyjfpiij4txtdo
 char const * beta_public_key_data = "A59A439B34662385D48F7FF9CA50030F889BAA9AC320EA5A85AAD777CF82B088"; // bdm_3betagfmasj5iqcayzzssba185wamgobois1xbfadcpqgz9r7e6a1zwztn5o
-char const * live_public_key_data = "40C8E1D867DA316ED2404C8A69624FFCFF884B0ADBB26B58F7A0C27C0E044A34"; // bdm_1i8aw9e8hpjjfub61m6cf7j6zz9zj37iopxkffehha84hi91akjn1n9s51fg
+char const * live_public_key_data = "85AEF27060BC789F8761F224A9A362EC2A0EB14FD3CAA8090AD9E84BB1280BC"; // bdm_33fgybr83h5rmy5p5wj6o8jp7u37n5ojbzbwoc1b3deyikxj717w8dpub49z
 char const * test_genesis_data = R"%%%({
 	"type": "open",
 	"source": "B0311EA55708D6A53C75CDBF88300259C6D018522FE3D4D0A242E431F9E8B6D0",
@@ -48,11 +48,11 @@ char const * beta_genesis_data = R"%%%({
 
 char const * live_genesis_data = R"%%%({
 	"type": "open",
-	"source": "40C8E1D867DA316ED2404C8A69624FFCFF884B0ADBB26B58F7A0C27C0E044A34",
-	"representative": "bdm_1i8aw9e8hpjjfub61m6cf7j6zz9zj37iopxkffehha84hi91akjn1n9s51fg",
-	"account": "bdm_1i8aw9e8hpjjfub61m6cf7j6zz9zj37iopxkffehha84hi91akjn1n9s51fg",
-	"work": "e6bdfde84acdea33",
-	"signature": "2EA5AD03F2925707F25E1245E821042EEAFE8DEDD5E50A913B8E65DD13945B73654E63BDC8D23AA4B315BE60FE8E75103D00A95B24C6EA916A8A1145296C1903"
+	"source": "85AEF27060BC789F8761F224A9A362EC2A0EB14FD3CAA8090AD9E84BB1280BC",
+	"representative": "bdm_33fgybr83h5rmy5p5wj6o8jp7u37n5ojbzbwoc1b3deyikxj717w8dpub49z",
+	"account": "bdm_33fgybr83h5rmy5p5wj6o8jp7u37n5ojbzbwoc1b3deyikxj717w8dpub49z",
+	"work": "3eeb6e123385332b",
+	"signature": "5FC3273F2101D212CECC8F3AEC484BD20A2B9F509EFD2FBCB986EAF2927E757278F001CF947E884325F9BE504404ED752EEB23F88DEEF4C6FCE3E8D25B0BDD0D"
 	})%%%";
 }
 
