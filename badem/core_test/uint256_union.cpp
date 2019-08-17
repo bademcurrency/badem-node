@@ -369,7 +369,6 @@ TEST (uint256_union, big_endian_union_function)
 TEST (uint256_union, decode_badem_variant)
 {
 	badem::uint256_union key;
-	ASSERT_FALSE (key.decode_account ("bdm_1111111111111111111111111111111111111111111111111111hifc8npp"));
 	ASSERT_FALSE (key.decode_account ("badem_1111111111111111111111111111111111111111111111111111hifc8npp"));
 }
 

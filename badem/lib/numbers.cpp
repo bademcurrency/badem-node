@@ -70,14 +70,13 @@ bool badem::uint256_union::decode_account (std::string const & source_a)
 	auto error (source_a.size () < 5);
 	if (!error)
 	{
-		auto bdm_prefix (source_a[0] == 'b' && source_a[1] == 'd' && source_a[2] == 'm' && (source_a[3] == '_' || source_a[3] == '-'));
 		auto badem_prefix (source_a[0] == 'b' && source_a[1] == 'a' && source_a[2] == 'd' && source_a[3] == 'e' && source_a[4] == 'm' && (source_a[5] == '_' || source_a[5] == '-'));
-		error = (bdm_prefix && source_a.size () != 64) || (badem_prefix && source_a.size () != 66);
+		error = (badem_prefix && source_a.size () != 66);
 		if (!error)
 		{
-			if (bdm_prefix || badem_prefix)
+			if (badem_prefix)
 			{
-				auto i (source_a.begin () + (bdm_prefix ? 4 : 5));
+				auto i (source_a.begin () + (badem_prefix ? 4 : 5));
 				if (*i == '1' || *i == '3')
 				{
 					badem::uint512_t number_l;

@@ -424,7 +424,7 @@ TEST (websocket, confirmation_options)
 	std::thread client_thread ([&client_thread_finished]() {
 		// Subscribe initially with a specific invalid account
 		auto response = websocket_test_call ("::1", "24078",
-		R"json({"action": "subscribe", "topic": "confirmation", "ack": "true", "options": {"confirmation_type": "active_quorum", "accounts": ["bdm_invalid"]}})json", true, true, 1s);
+		R"json({"action": "subscribe", "topic": "confirmation", "ack": "true", "options": {"confirmation_type": "active_quorum", "accounts": ["badem_invalid"]}})json", true, true, 1s);
 
 		ASSERT_FALSE (response);
 		client_thread_finished = true;
@@ -684,7 +684,7 @@ TEST (websocket, vote_options)
 	std::atomic<bool> client_thread_2_finished{ false };
 	std::thread client_thread_2 ([&client_thread_2_finished]() {
 		auto response = websocket_test_call ("::1", "24078",
-		R"json({"action": "subscribe", "topic": "vote", "ack": true, "options": {"representatives": ["bdm_invalid"]}})json", true, true, 1s);
+		R"json({"action": "subscribe", "topic": "vote", "ack": true, "options": {"representatives": ["badem_invalid"]}})json", true, true, 1s);
 
 		// No response expected given the filter
 		ASSERT_FALSE (response);
