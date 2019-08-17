@@ -76,7 +76,7 @@ bool badem::uint256_union::decode_account (std::string const & source_a)
 		{
 			if (badem_prefix)
 			{
-				auto i (source_a.begin () + (badem_prefix ? 4 : 5));
+				auto i (source_a.begin () + (badem_prefix ? 6 : 7));
 				if (*i == '1' || *i == '3')
 				{
 					badem::uint512_t number_l;
