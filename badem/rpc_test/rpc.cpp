@@ -4805,7 +4805,7 @@ TEST (rpc, work_peers_all)
 	rpc.start ();
 	boost::property_tree::ptree request;
 	request.put ("action", "work_peer_add");
-	request.put ("address", "::1");
+	request.put ("address", "::ffff:0.0.0.0");
 	request.put ("port", "0");
 	test_response response (request, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
@@ -4832,7 +4832,7 @@ TEST (rpc, work_peers_all)
 		peers.push_back (i->second.get<std::string> (""));
 	}
 	ASSERT_EQ (1, peers.size ());
-	ASSERT_EQ ("::1:0", peers[0]);
+	ASSERT_EQ ("::ffff:0.0.0.0:0", peers[0]);
 	boost::property_tree::ptree request2;
 	request2.put ("action", "work_peers_clear");
 	test_response response2 (request2, rpc.config.port, system.io_ctx);
@@ -6772,7 +6772,7 @@ TEST (rpc_config, serialization)
 TEST (rpc_config, migrate)
 {
 	badem::jsonconfig rpc;
-	rpc.put ("address", "::1");
+	rpc.put ("address", "::ffff:0.0.0.0");
 	rpc.put ("port", 11111);
 
 	bool updated = false;
