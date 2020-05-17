@@ -1,5 +1,6 @@
 #include <badem/boost/asio.hpp>
 #include <badem/lib/stats.hpp>
+#include <badem/lib/tomlconfig.hpp>
 
 #include <boost/format.hpp>
 #include <boost/property_tree/json_parser.hpp>
@@ -38,6 +39,55 @@ badem::error badem::stat_config::deserialize_json (badem::jsonconfig & json)
 	}
 
 	return json.get_error ();
+}
+
+badem::error badem::stat_config::deserialize_toml (badem::tomlconfig & toml)
+{
+	auto sampling_l (toml.get_optional_child ("sampling"));
+	if (sampling_l)
+	{
+		sampling_l->get<bool> ("enable", sampling_enabled);
+		sampling_l->get<size_t> ("capacity", capacity);
+		sampling_l->get<size_t> ("interval", interval);
+	}
+
+	auto log_l (toml.get_optional_child ("log"));
+	if (log_l)
+	{
+		log_l->get<bool> ("headers", log_headers);
+		log_l->get<size_t> ("interval_counters", log_interval_counters);
+		log_l->get<size_t> ("interval_samples", log_interval_samples);
+		log_l->get<size_t> ("rotation_count", log_rotation_count);
+		log_l->get<std::string> ("filename_counters", log_counters_filename);
+		log_l->get<std::string> ("filename_samples", log_samples_filename);
+
+		// Don't allow specifying the same file name for counter and samples logs
+		if (log_counters_filename == log_samples_filename)
+		{
+			toml.get_error ().set ("The statistics counter and samples config values must be different");
+		}
+	}
+
+	return toml.get_error ();
+}
+
+badem::error badem::stat_config::serialize_toml (badem::tomlconfig & toml) const
+{
+	badem::tomlconfig sampling_l;
+	sampling_l.put ("enable", sampling_enabled, "Enable or disable sampling.\ntype:bool");
+	sampling_l.put ("capacity", capacity, "How many sample intervals to keep in the ring buffer.\ntype:uint64");
+	sampling_l.put ("interval", interval, "Sample interval.\ntype:milliseconds");
+	toml.put_child ("sampling", sampling_l);
+
+	badem::tomlconfig log_l;
+	log_l.put ("headers", log_headers, "If true, write headers on each counter or samples writeout.\nThe header contains log type and the current wall time.\ntype:bool");
+	log_l.put ("interval_counters", log_interval_counters, "How often to log counters. 0 disables logging.\ntype:milliseconds");
+	log_l.put ("interval_samples", log_interval_samples, "How often to log samples. 0 disables logging.\ntype:milliseconds");
+	log_l.put ("rotation_count", log_rotation_count, "Maximum number of log outputs before rotating the file.\ntype:uint64");
+	log_l.put ("filename_counters", log_counters_filename, "Log file name for counters.\ntype:string");
+	log_l.put ("filename_samples", log_samples_filename, "Log file name for samples.\ntype:string");
+	toml.put_child ("log", log_l);
+	return toml.get_error ();
 }
 
 std::string badem::stat_log_sink::tm_to_string (tm & tm)
@@ -154,7 +204,7 @@ std::shared_ptr<badem::stat_entry> badem::stat::get_entry (uint32_t key)
 
 std::shared_ptr<badem::stat_entry> badem::stat::get_entry (uint32_t key, size_t interval, size_t capacity)
 {
-	std::unique_lock<std::mutex> lock (stat_mutex);
+	badem::unique_lock<std::mutex> lock (stat_mutex);
 	return get_entry_impl (key, interval, capacity);
 }
 
@@ -181,7 +231,7 @@ std::unique_ptr<badem::stat_log_sink> badem::stat::log_sink_json () const
 
 void badem::stat::log_counters (stat_log_sink & sink)
 {
-	std::unique_lock<std::mutex> lock (stat_mutex);
+	badem::unique_lock<std::mutex> lock (stat_mutex);
 	log_counters_impl (sink);
 }
 
@@ -216,7 +266,7 @@ void badem::stat::log_counters_impl (stat_log_sink & sink)
 
 void badem::stat::log_samples (stat_log_sink & sink)
 {
-	std::unique_lock<std::mutex> lock (stat_mutex);
+	badem::unique_lock<std::mutex> lock (stat_mutex);
 	log_samples_impl (sink);
 }
 
@@ -259,7 +309,7 @@ void badem::stat::update (uint32_t key_a, uint64_t value)
 
 	auto now (std::chrono::steady_clock::now ());
 
-	std::unique_lock<std::mutex> lock (stat_mutex);
+	badem::unique_lock<std::mutex> lock (stat_mutex);
 	if (!stopped)
 	{
 		auto entry (get_entry_impl (key_a, config.interval, config.capacity));
@@ -311,20 +361,20 @@ void badem::stat::update (uint32_t key_a, uint64_t value)
 
 std::chrono::seconds badem::stat::last_reset ()
 {
-	std::unique_lock<std::mutex> lock (stat_mutex);
+	badem::unique_lock<std::mutex> lock (stat_mutex);
 	auto now (std::chrono::steady_clock::now ());
 	return std::chrono::duration_cast<std::chrono::seconds> (now - timestamp);
 }
 
 void badem::stat::stop ()
 {
-	std::lock_guard<std::mutex> guard (stat_mutex);
+	badem::lock_guard<std::mutex> guard (stat_mutex);
 	stopped = true;
 }
 
 void badem::stat::clear ()
 {
-	std::unique_lock<std::mutex> lock (stat_mutex);
+	badem::unique_lock<std::mutex> lock (stat_mutex);
 	entries.clear ();
 	timestamp = std::chrono::steady_clock::now ();
 }
@@ -365,14 +415,17 @@ std::string badem::stat::type_to_string (uint32_t key)
 		case badem::stat::type::rollback:
 			res = "rollback";
 			break;
-		case badem::stat::type::traffic:
-			res = "traffic";
+		case badem::stat::type::traffic_udp:
+			res = "traffic_udp";
 			break;
 		case badem::stat::type::traffic_tcp:
-			res = "traffic_bootstrap";
+			res = "traffic_tcp";
 			break;
 		case badem::stat::type::vote:
 			res = "vote";
+			break;
+		case badem::stat::type::election:
+			res = "election";
 			break;
 		case badem::stat::type::message:
 			res = "message";
@@ -452,6 +505,12 @@ std::string badem::stat::detail_to_string (uint32_t key)
 		case badem::stat::detail::fork:
 			res = "fork";
 			break;
+		case badem::stat::detail::frontier_confirmation_failed:
+			res = "frontier_confirmation_failed";
+			break;
+		case badem::stat::detail::frontier_confirmation_successful:
+			res = "frontier_confirmation_successful";
+			break;
 		case badem::stat::detail::frontier_req:
 			res = "frontier_req";
 			break;
@@ -511,6 +570,18 @@ std::string badem::stat::detail_to_string (uint32_t key)
 			break;
 		case badem::stat::detail::vote_overflow:
 			res = "vote_overflow";
+			break;
+		case badem::stat::detail::vote_new:
+			res = "vote_new";
+			break;
+		case badem::stat::detail::vote_cached:
+			res = "vote_cached";
+			break;
+		case badem::stat::detail::late_block:
+			res = "late_block";
+			break;
+		case badem::stat::detail::late_block_seconds:
+			res = "late_block_seconds";
 			break;
 		case badem::stat::detail::blocking:
 			res = "blocking";

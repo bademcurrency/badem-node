@@ -21,7 +21,7 @@ void badem::signature_checker::verify (badem::signature_check_set & check_a)
 {
 	{
 		// Don't process anything else if we have stopped
-		std::lock_guard<std::mutex> guard (mutex);
+		badem::lock_guard<std::mutex> guard (mutex);
 		if (stopped)
 		{
 			return;
@@ -73,7 +73,7 @@ void badem::signature_checker::verify (badem::signature_check_set & check_a)
 
 void badem::signature_checker::stop ()
 {
-	std::lock_guard<std::mutex> guard (mutex);
+	badem::lock_guard<std::mutex> guard (mutex);
 	if (!stopped)
 	{
 		stopped = true;
@@ -83,7 +83,7 @@ void badem::signature_checker::stop ()
 
 void badem::signature_checker::flush ()
 {
-	std::lock_guard<std::mutex> guard (mutex);
+	badem::lock_guard<std::mutex> guard (mutex);
 	while (!stopped && tasks_remaining != 0)
 		;
 }
@@ -128,7 +128,8 @@ void badem::signature_checker::set_thread_names (unsigned num_threads)
 {
 	auto ready = false;
 	auto pending = num_threads;
-	std::condition_variable cv;
+	badem::condition_variable cv;
+
 	std::vector<std::promise<void>> promises (num_threads);
 	std::vector<std::future<void>> futures;
 	futures.reserve (num_threads);
@@ -140,7 +141,7 @@ void badem::signature_checker::set_thread_names (unsigned num_threads)
 	{
 		// clang-format off
 		boost::asio::post (thread_pool, [&cv, &ready, &pending, &mutex = mutex, &promise = promises[i]]() {
-			std::unique_lock<std::mutex> lk (mutex);
+			badem::unique_lock<std::mutex> lk (mutex);
 			badem::thread_role::set (badem::thread_role::name::signature_checking);
 			if (--pending == 0)
 			{

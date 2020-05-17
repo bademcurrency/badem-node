@@ -12,10 +12,10 @@
 
 TEST (ed25519, signing)
 {
-	badem::uint256_union prv (0);
-	badem::uint256_union pub (badem::pub_key (prv));
+	badem::private_key prv (0);
+	auto pub (badem::pub_key (prv));
 	badem::uint256_union message (0);
-	badem::uint512_union signature;
+	badem::signature signature;
 	ed25519_sign (message.bytes.data (), sizeof (message.bytes), prv.bytes.data (), pub.bytes.data (), signature.bytes.data ());
 	auto valid1 (ed25519_sign_open (message.bytes.data (), sizeof (message.bytes), pub.bytes.data (), signature.bytes.data ()));
 	ASSERT_EQ (0, valid1);
@@ -28,7 +28,7 @@ TEST (transaction_block, empty)
 {
 	badem::keypair key1;
 	badem::send_block block (0, 1, 13, key1.prv, key1.pub, 2);
-	badem::uint256_union hash (block.hash ());
+	auto hash (block.hash ());
 	ASSERT_FALSE (badem::validate_message (key1.pub, hash, block.signature));
 	block.signature.bytes[32] ^= 0x1;
 	ASSERT_TRUE (badem::validate_message (key1.pub, hash, block.signature));

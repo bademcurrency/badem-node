@@ -63,13 +63,14 @@ public:
 	void delegators ();
 	void delegators_count ();
 	void deterministic_key ();
+	void epoch_upgrade ();
 	void frontiers ();
 	void keepalive ();
 	void key_create ();
 	void key_expand ();
 	void ledger ();
-	void mbadem_to_raw (badem::uint128_t = badem::BDM_ratio);
-	void mbadem_from_raw (badem::uint128_t = badem::BDM_ratio);
+	void mbadem_to_raw (badem::uint128_t = badem::Mbdm_ratio);
+	void mbadem_from_raw (badem::uint128_t = badem::Mbdm_ratio);
 	void node_id ();
 	void node_id_delete ();
 	void password_change ();
@@ -144,6 +145,7 @@ public:
 	bool wallet_locked_impl (badem::transaction const &, std::shared_ptr<badem::wallet>);
 	bool wallet_account_impl (badem::transaction const &, std::shared_ptr<badem::wallet>, badem::account const &);
 	badem::account account_impl (std::string = "", std::error_code = badem::error_common::bad_account_number);
+	badem::account_info account_info_impl (badem::transaction const &, badem::account const &);
 	badem::amount amount_impl ();
 	std::shared_ptr<badem::block> block_impl (bool = true);
 	std::shared_ptr<badem::block> block_json_impl (bool = true);

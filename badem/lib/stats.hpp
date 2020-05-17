@@ -18,7 +18,7 @@
 namespace badem
 {
 class node;
-
+class tomlconfig;
 /**
  * Serialize and deserialize the 'statistics' node from config.json
  * All configuration values have defaults. In particular, file logging of statistics
@@ -29,6 +29,8 @@ class stat_config final
 public:
 	/** Reads the JSON statistics node */
 	badem::error deserialize_json (badem::jsonconfig & json);
+	badem::error deserialize_toml (badem::tomlconfig & toml);
+	badem::error serialize_toml (badem::tomlconfig & toml) const;
 
 	/** If true, sampling of counters is enabled */
 	bool sampling_enabled{ false };
@@ -65,13 +67,13 @@ public:
 	stat_datapoint () = default;
 	stat_datapoint (stat_datapoint const & other_a)
 	{
-		std::lock_guard<std::mutex> lock (other_a.datapoint_mutex);
+		badem::lock_guard<std::mutex> lock (other_a.datapoint_mutex);
 		value = other_a.value;
 		timestamp = other_a.timestamp;
 	}
 	stat_datapoint & operator= (stat_datapoint const & other_a)
 	{
-		std::lock_guard<std::mutex> lock (other_a.datapoint_mutex);
+		badem::lock_guard<std::mutex> lock (other_a.datapoint_mutex);
 		value = other_a.value;
 		timestamp = other_a.timestamp;
 		return *this;
@@ -79,28 +81,28 @@ public:
 
 	uint64_t get_value ()
 	{
-		std::lock_guard<std::mutex> lock (datapoint_mutex);
+		badem::lock_guard<std::mutex> lock (datapoint_mutex);
 		return value;
 	}
 	void set_value (uint64_t value_a)
 	{
-		std::lock_guard<std::mutex> lock (datapoint_mutex);
+		badem::lock_guard<std::mutex> lock (datapoint_mutex);
 		value = value_a;
 	}
 	std::chrono::system_clock::time_point get_timestamp ()
 	{
-		std::lock_guard<std::mutex> lock (datapoint_mutex);
+		badem::lock_guard<std::mutex> lock (datapoint_mutex);
 		return timestamp;
 	}
 	void set_timestamp (std::chrono::system_clock::time_point timestamp_a)
 	{
-		std::lock_guard<std::mutex> lock (datapoint_mutex);
+		badem::lock_guard<std::mutex> lock (datapoint_mutex);
 		timestamp = timestamp_a;
 	}
 	/** Add \addend to the current value and optionally update the timestamp */
 	void add (uint64_t addend, bool update_timestamp = true)
 	{
-		std::lock_guard<std::mutex> lock (datapoint_mutex);
+		badem::lock_guard<std::mutex> lock (datapoint_mutex);
 		value += addend;
 		if (update_timestamp)
 		{
@@ -218,7 +220,7 @@ public:
 	/** Primary statistics type */
 	enum class type : uint8_t
 	{
-		traffic,
+		traffic_udp,
 		traffic_tcp,
 		error,
 		message,
@@ -227,6 +229,7 @@ public:
 		rollback,
 		bootstrap,
 		vote,
+		election,
 		http_callback,
 		peering,
 		ipc,
@@ -285,6 +288,8 @@ public:
 		bulk_pull_request_failure,
 		bulk_push,
 		frontier_req,
+		frontier_confirmation_failed,
+		frontier_confirmation_successful,
 		error_socket_close,
 
 		// vote specific
@@ -292,6 +297,12 @@ public:
 		vote_replay,
 		vote_invalid,
 		vote_overflow,
+
+		// election specific
+		vote_new,
+		vote_cached,
+		late_block,
+		late_block_seconds,
 
 		// udp
 		blocking,

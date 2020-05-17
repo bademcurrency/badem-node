@@ -9,6 +9,9 @@
 
 // Some builds (mac) fail due to "Boost.Stacktrace requires `_Unwind_Backtrace` function".
 #ifndef _WIN32
+#ifdef BADEM_STACKTRACE_BACKTRACE
+#define BOOST_STACKTRACE_USE_BACKTRACE
+#endif
 #ifndef _GNU_SOURCE
 #define BEFORE_GNU_SOURCE 0
 #define _GNU_SOURCE
@@ -110,6 +113,12 @@ void * badem::write_mdb_txn::get_handle () const
 	return handle;
 }
 
+bool badem::write_mdb_txn::contains (badem::tables table_a) const
+{
+	// LMDB locks on every write
+	return true;
+}
+
 badem::mdb_txn_tracker::mdb_txn_tracker (badem::logger_mt & logger_a, badem::txn_tracking_config const & txn_tracking_config_a, std::chrono::milliseconds block_processor_batch_max_time_a) :
 logger (logger_a),
 txn_tracking_config (txn_tracking_config_a),
@@ -122,7 +131,7 @@ void badem::mdb_txn_tracker::serialize_json (boost::property_tree::ptree & json,
 	// Copying is cheap compared to generating the stack trace strings, so reduce time holding the mutex
 	std::vector<mdb_txn_stats> copy_stats;
 	{
-		std::lock_guard<std::mutex> guard (mutex);
+		badem::lock_guard<std::mutex> guard (mutex);
 		copy_stats = stats;
 	}
 
@@ -191,7 +200,7 @@ void badem::mdb_txn_tracker::output_finished (badem::mdb_txn_stats const & mdb_t
 
 void badem::mdb_txn_tracker::add (const badem::transaction_impl * transaction_impl)
 {
-	std::lock_guard<std::mutex> guard (mutex);
+	badem::lock_guard<std::mutex> guard (mutex);
 	// clang-format off
 	assert (std::find_if (stats.cbegin (), stats.cend (), matches_txn (transaction_impl)) == stats.cend ());
 	// clang-format on
@@ -201,7 +210,7 @@ void badem::mdb_txn_tracker::add (const badem::transaction_impl * transaction_im
 /** Can be called without error if transaction does not exist */
 void badem::mdb_txn_tracker::erase (const badem::transaction_impl * transaction_impl)
 {
-	std::lock_guard<std::mutex> guard (mutex);
+	badem::lock_guard<std::mutex> guard (mutex);
 	// clang-format off
 	auto it = std::find_if (stats.begin (), stats.end (), matches_txn (transaction_impl));
 	// clang-format on

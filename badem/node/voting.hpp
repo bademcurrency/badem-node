@@ -28,10 +28,10 @@ public:
 
 private:
 	void run ();
-	void send (std::unique_lock<std::mutex> &);
+	void send (badem::unique_lock<std::mutex> &);
 	badem::node & node;
 	std::mutex mutex;
-	std::condition_variable condition;
+	badem::condition_variable condition;
 	std::deque<badem::block_hash> hashes;
 	badem::network_params network_params;
 	bool stopped{ false };

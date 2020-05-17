@@ -14,12 +14,17 @@ add_library (badem_lib
 	${platform_sources}
 	alarm.hpp
 	alarm.cpp
+	asio.hpp
+	asio.cpp
 	blockbuilders.hpp
 	blockbuilders.cpp
 	blocks.hpp
 	blocks.cpp
 	config.hpp
 	config.cpp
+	configbase.hpp
+	diagnosticsconfig.hpp
+	diagnosticsconfig.cpp
 	errors.hpp
 	errors.cpp
 	ipc.hpp
@@ -28,19 +33,28 @@ add_library (badem_lib
 	ipc_client.cpp
 	json_error_response.hpp
 	jsonconfig.hpp
+	locks.hpp
+	locks.cpp
 	logger_mt.hpp
 	memory.hpp
 	memory.cpp
 	numbers.hpp
 	numbers.cpp
+	rep_weights.hpp
+	rep_weights.cpp
+	rocksdbconfig.hpp
+	rocksdbconfig.cpp
 	rpc_handler_interface.hpp
 	rpcconfig.hpp
 	rpcconfig.cpp
 	stats.hpp
 	stats.cpp
 	timer.hpp
+	tomlconfig.hpp
 	utility.hpp
 	utility.cpp
+	walletconfig.hpp
+	walletconfig.cpp
 	work.hpp
 	work.cpp)
 
@@ -51,6 +65,10 @@ target_link_libraries (badem_lib
 	${CRYPTOPP_LIBRARY}
 	${CMAKE_DL_LIBS}
 	Boost::boost)
+
+if (BADEM_STACKTRACE_BACKTRACE)
+	target_link_libraries(badem_lib backtrace)
+endif ()
 
 target_compile_definitions(badem_lib
 	PUBLIC

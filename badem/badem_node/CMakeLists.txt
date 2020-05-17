@@ -12,6 +12,10 @@ target_link_libraries (badem_node
 	${PLATFORM_LIBS}
 )
 
+if (BADEM_STACKTRACE_BACKTRACE)
+	target_link_libraries(badem_node backtrace)
+endif ()
+
 target_compile_definitions(badem_node
 	PRIVATE
 		-DTAG_VERSION_STRING=${TAG_VERSION_STRING}
@@ -22,6 +26,11 @@ set_target_properties (badem_node
 	PROPERTIES
 		COMPILE_FLAGS
 			"-DQT_NO_KEYWORDS -DBOOST_ASIO_HAS_STD_ARRAY=1")
+
+add_custom_command(TARGET badem_node
+				   POST_BUILD
+				   COMMAND badem_node --generate_config node > ${PROJECT_BINARY_DIR}/config-node.toml.sample
+				   COMMAND badem_node --generate_config rpc > ${PROJECT_BINARY_DIR}/config-rpc.toml.sample)
 
 if ((BADEM_GUI OR BDM_GUI) AND NOT APPLE)
 	install(TARGETS badem_node

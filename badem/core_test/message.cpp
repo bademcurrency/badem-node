@@ -40,6 +40,7 @@ TEST (message, keepalive_deserialize)
 
 TEST (message, publish_serialization)
 {
+	badem::network_params params;
 	badem::publish publish (std::make_shared<badem::send_block> (0, 1, 2, badem::keypair ().prv, 4, 5));
 	ASSERT_EQ (badem::block_type::send, publish.header.block_type ());
 	std::vector<uint8_t> bytes;
@@ -50,9 +51,9 @@ TEST (message, publish_serialization)
 	ASSERT_EQ (8, bytes.size ());
 	ASSERT_EQ (0x52, bytes[0]);
 	ASSERT_EQ (0x41, bytes[1]);
-	ASSERT_EQ (badem::protocol_version, bytes[2]);
-	ASSERT_EQ (badem::protocol_version, bytes[3]);
-	ASSERT_EQ (badem::protocol_version_min, bytes[4]);
+	ASSERT_EQ (params.protocol.protocol_version, bytes[2]);
+	ASSERT_EQ (params.protocol.protocol_version, bytes[3]);
+	ASSERT_EQ (params.protocol.protocol_version_min, bytes[4]);
 	ASSERT_EQ (static_cast<uint8_t> (badem::message_type::publish), bytes[5]);
 	ASSERT_EQ (0x00, bytes[6]); // extensions
 	ASSERT_EQ (static_cast<uint8_t> (badem::block_type::send), bytes[7]);
@@ -60,9 +61,9 @@ TEST (message, publish_serialization)
 	auto error (false);
 	badem::message_header header (error, stream);
 	ASSERT_FALSE (error);
-	ASSERT_EQ (badem::protocol_version_min, header.version_min);
-	ASSERT_EQ (badem::protocol_version, header.version_using);
-	ASSERT_EQ (badem::protocol_version, header.version_max);
+	ASSERT_EQ (params.protocol.protocol_version_min, header.version_min);
+	ASSERT_EQ (params.protocol.protocol_version, header.version_using);
+	ASSERT_EQ (params.protocol.protocol_version, header.version_max);
 	ASSERT_EQ (badem::message_type::publish, header.type);
 }
 
@@ -91,8 +92,9 @@ TEST (message, confirm_ack_hash_serialization)
 	for (auto i (hashes.size ()); i < 12; i++)
 	{
 		badem::keypair key1;
-		badem::keypair previous;
-		badem::state_block block (key1.pub, previous.pub, key1.pub, 2, 4, key1.prv, key1.pub, 5);
+		badem::block_hash previous;
+		badem::random_pool::generate_block (previous.bytes.data (), previous.bytes.size ());
+		badem::state_block block (key1.pub, previous, key1.pub, 2, 4, key1.prv, key1.pub, 5);
 		hashes.push_back (block.hash ());
 	}
 	badem::keypair representative1;
@@ -166,14 +168,15 @@ TEST (message, confirm_req_hash_batch_serialization)
 {
 	badem::keypair key;
 	badem::keypair representative;
-	std::vector<std::pair<badem::block_hash, badem::block_hash>> roots_hashes;
+	std::vector<std::pair<badem::block_hash, badem::root>> roots_hashes;
 	badem::state_block open (key.pub, 0, representative.pub, 2, 4, key.prv, key.pub, 5);
 	roots_hashes.push_back (std::make_pair (open.hash (), open.root ()));
 	for (auto i (roots_hashes.size ()); i < 7; i++)
 	{
 		badem::keypair key1;
-		badem::keypair previous;
-		badem::state_block block (key1.pub, previous.pub, representative.pub, 2, 4, key1.prv, key1.pub, 5);
+		badem::block_hash previous;
+		badem::random_pool::generate_block (previous.bytes.data (), previous.bytes.size ());
+		badem::state_block block (key1.pub, previous, representative.pub, 2, 4, key1.prv, key1.pub, 5);
 		roots_hashes.push_back (std::make_pair (block.hash (), block.root ()));
 	}
 	roots_hashes.push_back (std::make_pair (open.hash (), open.root ()));

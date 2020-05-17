@@ -2,12 +2,18 @@
 
 #include <badem/boost/asio.hpp>
 #include <badem/lib/alarm.hpp>
+#include <badem/lib/rep_weights.hpp>
 #include <badem/lib/stats.hpp>
 #include <badem/lib/work.hpp>
 #include <badem/node/active_transactions.hpp>
 #include <badem/node/blockprocessor.hpp>
-#include <badem/node/bootstrap.hpp>
+#include <badem/node/bootstrap/bootstrap.hpp>
+#include <badem/node/bootstrap/bootstrap_bulk_pull.hpp>
+#include <badem/node/bootstrap/bootstrap_bulk_push.hpp>
+#include <badem/node/bootstrap/bootstrap_frontier.hpp>
+#include <badem/node/bootstrap/bootstrap_server.hpp>
 #include <badem/node/confirmation_height_processor.hpp>
+#include <badem/node/distributed_work.hpp>
 #include <badem/node/election.hpp>
 #include <badem/node/gap_cache.hpp>
 #include <badem/node/logging.hpp>
@@ -72,22 +78,14 @@ public:
 
 std::unique_ptr<seq_con_info_component> collect_seq_con_info (block_arrival & block_arrival, const std::string & name);
 
-class node_init final
-{
-public:
-	bool error () const;
-	bool block_store_init{ false };
-	bool wallets_store_init{ false };
-};
-
 std::unique_ptr<seq_con_info_component> collect_seq_con_info (rep_crawler & rep_crawler, const std::string & name);
 std::unique_ptr<seq_con_info_component> collect_seq_con_info (block_processor & block_processor, const std::string & name);
 
 class node final : public std::enable_shared_from_this<badem::node>
 {
 public:
-	node (badem::node_init &, boost::asio::io_context &, uint16_t, boost::filesystem::path const &, badem::alarm &, badem::logging const &, badem::work_pool &, badem::node_flags = badem::node_flags ());
-	node (badem::node_init &, boost::asio::io_context &, boost::filesystem::path const &, badem::alarm &, badem::node_config const &, badem::work_pool &, badem::node_flags = badem::node_flags ());
+	node (boost::asio::io_context &, uint16_t, boost::filesystem::path const &, badem::alarm &, badem::logging const &, badem::work_pool &, badem::node_flags = badem::node_flags ());
+	node (boost::asio::io_context &, boost::filesystem::path const &, badem::alarm &, badem::node_config const &, badem::work_pool &, badem::node_flags = badem::node_flags ());
 	~node ();
 	template <typename T>
 	void background (T action_a)
@@ -112,7 +110,7 @@ public:
 	std::shared_ptr<badem::block> block (badem::block_hash const &);
 	std::pair<badem::uint128_t, badem::uint128_t> balance_pending (badem::account const &);
 	badem::uint128_t weight (badem::account const &);
-	badem::account representative (badem::account const &);
+	badem::block_hash rep_block (badem::account const &);
 	badem::uint128_t minimum_principal_weight ();
 	badem::uint128_t minimum_principal_weight (badem::uint128_t const &);
 	void ongoing_rep_calculation ();
@@ -125,12 +123,15 @@ public:
 	void bootstrap_wallet ();
 	void unchecked_cleanup ();
 	int price (badem::uint128_t const &, int);
-	void work_generate_blocking (badem::block &, uint64_t);
-	void work_generate_blocking (badem::block &);
-	uint64_t work_generate_blocking (badem::uint256_union const &, uint64_t);
-	uint64_t work_generate_blocking (badem::uint256_union const &);
-	void work_generate (badem::uint256_union const &, std::function<void(uint64_t)>, uint64_t);
-	void work_generate (badem::uint256_union const &, std::function<void(uint64_t)>);
+	bool local_work_generation_enabled () const;
+	bool work_generation_enabled () const;
+	bool work_generation_enabled (std::vector<std::pair<std::string, uint16_t>> const &) const;
+	boost::optional<uint64_t> work_generate_blocking (badem::block &, uint64_t);
+	boost::optional<uint64_t> work_generate_blocking (badem::block &);
+	boost::optional<uint64_t> work_generate_blocking (badem::root const &, uint64_t, boost::optional<badem::account> const & = boost::none);
+	boost::optional<uint64_t> work_generate_blocking (badem::root const &, boost::optional<badem::account> const & = boost::none);
+	void work_generate (badem::root const &, std::function<void(boost::optional<uint64_t>)>, uint64_t, boost::optional<badem::account> const & = boost::none, bool const = false);
+	void work_generate (badem::root const &, std::function<void(boost::optional<uint64_t>)>, boost::optional<badem::account> const & = boost::none);
 	void add_initial_peers ();
 	void block_confirm (std::shared_ptr<badem::block>);
 	bool block_confirmed_or_being_confirmed (badem::transaction const &, badem::block_hash const &);
@@ -141,6 +142,8 @@ public:
 	void ongoing_online_weight_calculation ();
 	void ongoing_online_weight_calculation_queue ();
 	bool online () const;
+	bool init_error () const;
+	badem::worker worker;
 	badem::write_database_queue write_database_queue;
 	boost::asio::io_context & io_ctx;
 	boost::latch node_initialized_latch;
@@ -151,6 +154,7 @@ public:
 	badem::node_flags flags;
 	badem::alarm & alarm;
 	badem::work_pool & work;
+	badem::distributed_work_factory distributed_work;
 	badem::logger_mt logger;
 	std::unique_ptr<badem::block_store> store_impl;
 	badem::block_store & store;
@@ -183,6 +187,7 @@ public:
 	badem::wallets wallets;
 	const std::chrono::steady_clock::time_point startup_time;
 	std::chrono::seconds unchecked_cutoff = std::chrono::seconds (7 * 24 * 60 * 60); // Week
+	std::atomic<bool> unresponsive_work_peers{ false };
 	std::atomic<bool> stopped{ false };
 	static double constexpr price_max = 16.0;
 	static double constexpr free_cutoff = 1024.0;
@@ -190,16 +195,17 @@ public:
 
 std::unique_ptr<seq_con_info_component> collect_seq_con_info (node & node, const std::string & name);
 
+badem::node_flags const & inactive_node_flag_defaults ();
+
 class inactive_node final
 {
 public:
-	inactive_node (boost::filesystem::path const & path = badem::working_path (), uint16_t = 24000);
+	inactive_node (boost::filesystem::path const & path = badem::working_path (), uint16_t = 24000, badem::node_flags const & = badem::inactive_node_flag_defaults ());
 	~inactive_node ();
 	boost::filesystem::path path;
 	std::shared_ptr<boost::asio::io_context> io_context;
 	badem::alarm alarm;
 	badem::logging logging;
-	badem::node_init init;
 	badem::work_pool work;
 	uint16_t peering_port;
 	std::shared_ptr<badem::node> node;

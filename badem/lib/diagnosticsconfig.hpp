@@ -7,7 +7,7 @@
 namespace badem
 {
 class jsonconfig;
-
+class tomlconfig;
 class txn_tracking_config final
 {
 public:
@@ -24,6 +24,8 @@ class diagnostics_config final
 public:
 	badem::error serialize_json (badem::jsonconfig &) const;
 	badem::error deserialize_json (badem::jsonconfig &);
+	badem::error serialize_toml (badem::tomlconfig &) const;
+	badem::error deserialize_toml (badem::tomlconfig &);
 
 	txn_tracking_config txn_tracking;
 };

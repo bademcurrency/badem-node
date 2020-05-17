@@ -1,5 +1,4 @@
 #include <badem/core_test/testutil.hpp>
-#include <badem/lib/jsonconfig.hpp>
 #include <badem/secure/common.hpp>
 
 #include <gtest/gtest.h>
@@ -98,31 +97,31 @@ struct test_punct : std::moneypunct<char>
 
 TEST (uint128_union, balance_format)
 {
-	ASSERT_EQ ("0", badem::amount (badem::uint128_t ("0")).format_balance (badem::BDM_ratio, 0, false));
-	ASSERT_EQ ("0", badem::amount (badem::uint128_t ("0")).format_balance (badem::BDM_ratio, 2, true));
-	ASSERT_EQ ("340,282,366", badem::amount (badem::uint128_t ("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")).format_balance (badem::BDM_ratio, 0, true));
-	ASSERT_EQ ("340,282,366.920938463463374607431768211455", badem::amount (badem::uint128_t ("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")).format_balance (badem::BDM_ratio, 64, true));
+	ASSERT_EQ ("0", badem::amount (badem::uint128_t ("0")).format_balance (badem::Mbdm_ratio, 0, false));
+	ASSERT_EQ ("0", badem::amount (badem::uint128_t ("0")).format_balance (badem::Mbdm_ratio, 2, true));
+	ASSERT_EQ ("340,282,366", badem::amount (badem::uint128_t ("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")).format_balance (badem::Mbdm_ratio, 0, true));
+	ASSERT_EQ ("340,282,366.920938463463374607431768211455", badem::amount (badem::uint128_t ("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")).format_balance (badem::Mbdm_ratio, 64, true));
 	ASSERT_EQ ("340,282,366,920,938,463,463,374,607,431,768,211,455", badem::amount (badem::uint128_t ("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")).format_balance (1, 4, true));
-	ASSERT_EQ ("340,282,366", badem::amount (badem::uint128_t ("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE")).format_balance (badem::BDM_ratio, 0, true));
-	ASSERT_EQ ("340,282,366.920938463463374607431768211454", badem::amount (badem::uint128_t ("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE")).format_balance (badem::BDM_ratio, 64, true));
+	ASSERT_EQ ("340,282,366", badem::amount (badem::uint128_t ("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE")).format_balance (badem::Mbdm_ratio, 0, true));
+	ASSERT_EQ ("340,282,366.920938463463374607431768211454", badem::amount (badem::uint128_t ("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE")).format_balance (badem::Mbdm_ratio, 64, true));
 	ASSERT_EQ ("340282366920938463463374607431768211454", badem::amount (badem::uint128_t ("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE")).format_balance (1, 4, false));
-	ASSERT_EQ ("170,141,183", badem::amount (badem::uint128_t ("0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE")).format_balance (badem::BDM_ratio, 0, true));
-	ASSERT_EQ ("170,141,183.460469231731687303715884105726", badem::amount (badem::uint128_t ("0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE")).format_balance (badem::BDM_ratio, 64, true));
+	ASSERT_EQ ("170,141,183", badem::amount (badem::uint128_t ("0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE")).format_balance (badem::Mbdm_ratio, 0, true));
+	ASSERT_EQ ("170,141,183.460469231731687303715884105726", badem::amount (badem::uint128_t ("0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE")).format_balance (badem::Mbdm_ratio, 64, true));
 	ASSERT_EQ ("170141183460469231731687303715884105726", badem::amount (badem::uint128_t ("0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE")).format_balance (1, 4, false));
-	ASSERT_EQ ("1", badem::amount (badem::uint128_t ("1000000000000000000000000000000")).format_balance (badem::BDM_ratio, 2, true));
-	ASSERT_EQ ("1.2", badem::amount (badem::uint128_t ("1200000000000000000000000000000")).format_balance (badem::BDM_ratio, 2, true));
-	ASSERT_EQ ("1.23", badem::amount (badem::uint128_t ("1230000000000000000000000000000")).format_balance (badem::BDM_ratio, 2, true));
-	ASSERT_EQ ("1.2", badem::amount (badem::uint128_t ("1230000000000000000000000000000")).format_balance (badem::BDM_ratio, 1, true));
-	ASSERT_EQ ("1", badem::amount (badem::uint128_t ("1230000000000000000000000000000")).format_balance (badem::BDM_ratio, 0, true));
-	ASSERT_EQ ("< 0.01", badem::amount (badem::RAW_ratio * 10).format_balance (badem::BDM_ratio, 2, true));
-	ASSERT_EQ ("< 0.1", badem::amount (badem::RAW_ratio * 10).format_balance (badem::BDM_ratio, 1, true));
-	ASSERT_EQ ("< 1", badem::amount (badem::RAW_ratio * 10).format_balance (badem::BDM_ratio, 0, true));
-	ASSERT_EQ ("< 0.01", badem::amount (badem::RAW_ratio * 9999).format_balance (badem::BDM_ratio, 2, true));
-	ASSERT_EQ ("0.01", badem::amount (badem::RAW_ratio * 10000).format_balance (badem::BDM_ratio, 2, true));
-	ASSERT_EQ ("123456789", badem::amount (badem::BDM_ratio * 123456789).format_balance (badem::BDM_ratio, 2, false));
-	ASSERT_EQ ("123,456,789", badem::amount (badem::BDM_ratio * 123456789).format_balance (badem::BDM_ratio, 2, true));
-	ASSERT_EQ ("123,456,789.12", badem::amount (badem::BDM_ratio * 123456789 + badem::RAW_ratio * 123).format_balance (badem::BDM_ratio, 2, true));
-	ASSERT_EQ ("12-3456-789+123", badem::amount (badem::BDM_ratio * 123456789 + badem::RAW_ratio * 123).format_balance (badem::BDM_ratio, 4, true, std::locale (std::cout.getloc (), new test_punct)));
+	ASSERT_EQ ("1", badem::amount (badem::uint128_t ("1000000000000000000000000000000")).format_balance (badem::Mbdm_ratio, 2, true));
+	ASSERT_EQ ("1.2", badem::amount (badem::uint128_t ("1200000000000000000000000000000")).format_balance (badem::Mbdm_ratio, 2, true));
+	ASSERT_EQ ("1.23", badem::amount (badem::uint128_t ("1230000000000000000000000000000")).format_balance (badem::Mbdm_ratio, 2, true));
+	ASSERT_EQ ("1.2", badem::amount (badem::uint128_t ("1230000000000000000000000000000")).format_balance (badem::Mbdm_ratio, 1, true));
+	ASSERT_EQ ("1", badem::amount (badem::uint128_t ("1230000000000000000000000000000")).format_balance (badem::Mbdm_ratio, 0, true));
+	ASSERT_EQ ("< 0.01", badem::amount (badem::bdm_ratio * 10).format_balance (badem::Mbdm_ratio, 2, true));
+	ASSERT_EQ ("< 0.1", badem::amount (badem::bdm_ratio * 10).format_balance (badem::Mbdm_ratio, 1, true));
+	ASSERT_EQ ("< 1", badem::amount (badem::bdm_ratio * 10).format_balance (badem::Mbdm_ratio, 0, true));
+	ASSERT_EQ ("< 0.01", badem::amount (badem::bdm_ratio * 9999).format_balance (badem::Mbdm_ratio, 2, true));
+	ASSERT_EQ ("0.01", badem::amount (badem::bdm_ratio * 10000).format_balance (badem::Mbdm_ratio, 2, true));
+	ASSERT_EQ ("123456789", badem::amount (badem::Mbdm_ratio * 123456789).format_balance (badem::Mbdm_ratio, 2, false));
+	ASSERT_EQ ("123,456,789", badem::amount (badem::Mbdm_ratio * 123456789).format_balance (badem::Mbdm_ratio, 2, true));
+	ASSERT_EQ ("123,456,789.12", badem::amount (badem::Mbdm_ratio * 123456789 + badem::kbdm_ratio * 123).format_balance (badem::Mbdm_ratio, 2, true));
+	ASSERT_EQ ("12-3456-789+123", badem::amount (badem::Mbdm_ratio * 123456789 + badem::kbdm_ratio * 123).format_balance (badem::Mbdm_ratio, 4, true, std::locale (std::cout.getloc (), new test_punct)));
 }
 
 TEST (uint128_union, decode_decimal)
@@ -135,27 +134,27 @@ TEST (uint128_union, decode_decimal)
 	ASSERT_TRUE (amount.decode_dec ("0.1", badem::raw_ratio));
 	ASSERT_FALSE (amount.decode_dec ("1", badem::raw_ratio));
 	ASSERT_EQ (1, amount.number ());
-	ASSERT_FALSE (amount.decode_dec ("340282366.920938463463374607431768211454", badem::BDM_ratio));
+	ASSERT_FALSE (amount.decode_dec ("340282366.920938463463374607431768211454", badem::Mbdm_ratio));
 	ASSERT_EQ (std::numeric_limits<badem::uint128_t>::max () - 1, amount.number ());
-	ASSERT_TRUE (amount.decode_dec ("340282366.920938463463374607431768211456", badem::BDM_ratio));
-	ASSERT_TRUE (amount.decode_dec ("340282367", badem::BDM_ratio));
-	ASSERT_FALSE (amount.decode_dec ("0.000000000000000000000001", badem::BDM_ratio));
+	ASSERT_TRUE (amount.decode_dec ("340282366.920938463463374607431768211456", badem::Mbdm_ratio));
+	ASSERT_TRUE (amount.decode_dec ("340282367", badem::Mbdm_ratio));
+	ASSERT_FALSE (amount.decode_dec ("0.000000000000000000000001", badem::Mbdm_ratio));
 	ASSERT_EQ (1000000, amount.number ());
-	ASSERT_FALSE (amount.decode_dec ("0.000000000000000000000000000001", badem::BDM_ratio));
+	ASSERT_FALSE (amount.decode_dec ("0.000000000000000000000000000001", badem::Mbdm_ratio));
 	ASSERT_EQ (1, amount.number ());
-	ASSERT_TRUE (amount.decode_dec ("0.0000000000000000000000000000001", badem::BDM_ratio));
-	ASSERT_TRUE (amount.decode_dec (".1", badem::BDM_ratio));
-	ASSERT_TRUE (amount.decode_dec ("0.", badem::BDM_ratio));
-	ASSERT_FALSE (amount.decode_dec ("9.999999999999999999999999999999", badem::BDM_ratio));
+	ASSERT_TRUE (amount.decode_dec ("0.0000000000000000000000000000001", badem::Mbdm_ratio));
+	ASSERT_TRUE (amount.decode_dec (".1", badem::Mbdm_ratio));
+	ASSERT_TRUE (amount.decode_dec ("0.", badem::Mbdm_ratio));
+	ASSERT_FALSE (amount.decode_dec ("9.999999999999999999999999999999", badem::Mbdm_ratio));
 	ASSERT_EQ (badem::uint128_t ("9999999999999999999999999999999"), amount.number ());
-	ASSERT_FALSE (amount.decode_dec ("170141183460469.231731687303715884105727", badem::RAW_ratio));
+	ASSERT_FALSE (amount.decode_dec ("170141183460469.231731687303715884105727", badem::bdm_ratio));
 	ASSERT_EQ (badem::uint128_t ("170141183460469231731687303715884105727"), amount.number ());
-	ASSERT_FALSE (amount.decode_dec ("2.000000000000000000000002", badem::RAW_ratio));
-	ASSERT_EQ (2 * badem::RAW_ratio + 2, amount.number ());
-	ASSERT_FALSE (amount.decode_dec ("2", badem::RAW_ratio));
-	ASSERT_EQ (2 * badem::RAW_ratio, amount.number ());
-	ASSERT_FALSE (amount.decode_dec ("1230", badem::kBDM_ratio));
-	ASSERT_EQ (1230 * badem::kBDM_ratio, amount.number ());
+	ASSERT_FALSE (amount.decode_dec ("2.000000000000000000000002", badem::bdm_ratio));
+	ASSERT_EQ (2 * badem::bdm_ratio + 2, amount.number ());
+	ASSERT_FALSE (amount.decode_dec ("2", badem::bdm_ratio));
+	ASSERT_EQ (2 * badem::bdm_ratio, amount.number ());
+	ASSERT_FALSE (amount.decode_dec ("1230", badem::Gbdm_ratio));
+	ASSERT_EQ (1230 * badem::Gbdm_ratio, amount.number ());
 }
 
 TEST (unions, identity)
@@ -175,7 +174,7 @@ TEST (uint256_union, key_encryption)
 	badem::raw_key key4;
 	key4.decrypt (encrypted, secret_key, key1.pub.owords[0]);
 	ASSERT_EQ (key1.prv, key4);
-	badem::public_key pub (badem::pub_key (key4.data));
+	auto pub (badem::pub_key (key4.as_private_key ()));
 	ASSERT_EQ (key1.pub, pub);
 }
 
@@ -368,79 +367,8 @@ TEST (uint256_union, big_endian_union_function)
 
 TEST (uint256_union, decode_badem_variant)
 {
-	badem::uint256_union key;
+	badem::account key;
 	ASSERT_FALSE (key.decode_account ("badem_1111111111111111111111111111111111111111111111111111hifc8npp"));
-}
-
-TEST (uint256_union, account_transcode)
-{
-	badem::uint256_union value;
-	auto text (badem::test_genesis_key.pub.to_account ());
-	ASSERT_FALSE (value.decode_account (text));
-	ASSERT_EQ (badem::test_genesis_key.pub, value);
-
-	/*
-	 * Handle different offsets for the underscore separator
-	 * for "bdm_" prefixed and "badem_" prefixed accounts
-	 */
-	unsigned offset = (text.front () == 'b') ? 3 : 4;
-	ASSERT_EQ ('_', text[offset]);
-	text[offset] = '-';
-	badem::uint256_union value2;
-	ASSERT_FALSE (value2.decode_account (text));
-	ASSERT_EQ (value, value2);
-}
-
-TEST (uint256_union, account_encode_lex)
-{
-	badem::uint256_union min ("0000000000000000000000000000000000000000000000000000000000000000");
-	badem::uint256_union max ("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
-	auto min_text (min.to_account ());
-	auto max_text (max.to_account ());
-
-	/*
-	 * Handle different lengths for "bdm_" prefixed and "badem_" prefixed accounts
-	 */
-	unsigned length = (min_text.front () == 'b') ? 64 : 65;
-	ASSERT_EQ (length, min_text.size ());
-	ASSERT_EQ (length, max_text.size ());
-
-	auto previous (min_text);
-	for (auto i (1); i != 1000; ++i)
-	{
-		badem::uint256_union number (min.number () + i);
-		auto text (number.to_account ());
-		badem::uint256_union output;
-		output.decode_account (text);
-		ASSERT_EQ (number, output);
-		ASSERT_GT (text, previous);
-		previous = text;
-	}
-	for (auto i (1); i != 1000; ++i)
-	{
-		badem::keypair key;
-		auto text (key.pub.to_account ());
-		badem::uint256_union output;
-		output.decode_account (text);
-		ASSERT_EQ (key.pub, output);
-	}
-}
-
-TEST (uint256_union, bounds)
-{
-	badem::uint256_union key;
-	std::string bad1 (64, '\x000');
-	bad1[0] = 'b';
-	bad1[1] = 'd';
-	bad1[2] = 'm';
-	bad1[3] = '-';
-	ASSERT_TRUE (key.decode_account (bad1));
-	std::string bad2 (64, '\x0ff');
-	bad2[0] = 'b';
-	bad2[1] = 'd';
-	bad2[2] = 'm';
-	bad2[3] = '-';
-	ASSERT_TRUE (key.decode_account (bad2));
 }
 
 TEST (uint256_union, operator_less_than)

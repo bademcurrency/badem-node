@@ -13,11 +13,10 @@ TEST (versioning, account_info_v1)
 	badem::account_info_v1 v1 (open.hash (), open.hash (), 3, 4);
 	{
 		badem::logger_mt logger;
-		auto error (false);
-		badem::mdb_store store (error, logger, file);
-		ASSERT_FALSE (error);
+		badem::mdb_store store (logger, file);
+		ASSERT_FALSE (store.init_error ());
 		auto transaction (store.tx_begin_write ());
-		badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0);
+		badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 		store.block_put (transaction, open.hash (), open, sideband);
 		auto status (mdb_put (store.env.tx (transaction), store.accounts_v0, badem::mdb_val (account), badem::mdb_val (sizeof (v1), &v1), 0));
 		ASSERT_EQ (0, status);
@@ -25,9 +24,8 @@ TEST (versioning, account_info_v1)
 	}
 
 	badem::logger_mt logger;
-	auto error (false);
-	badem::mdb_store store (error, logger, file);
-	ASSERT_FALSE (error);
+	badem::mdb_store store (logger, file);
+	ASSERT_FALSE (store.init_error ());
 	auto transaction (store.tx_begin_read ());
 	badem::account_info v_latest;
 	ASSERT_FALSE (store.account_get (transaction, account, v_latest));
@@ -35,12 +33,12 @@ TEST (versioning, account_info_v1)
 	ASSERT_EQ (v1.balance, v_latest.balance);
 	ASSERT_EQ (v1.head, v_latest.head);
 	ASSERT_EQ (v1.modified, v_latest.modified);
-	ASSERT_EQ (v1.rep_block, v_latest.rep_block);
+	ASSERT_EQ (v1.rep_block, open.hash ());
 	ASSERT_EQ (1, v_latest.block_count);
 	uint64_t confirmation_height;
 	ASSERT_FALSE (store.confirmation_height_get (transaction, account, confirmation_height));
 	ASSERT_EQ (0, confirmation_height);
-	ASSERT_EQ (badem::epoch::epoch_0, v_latest.epoch);
+	ASSERT_EQ (badem::epoch::epoch_0, v_latest.epoch ());
 }
 
 TEST (versioning, account_info_v5)
@@ -51,11 +49,10 @@ TEST (versioning, account_info_v5)
 	badem::account_info_v5 v5 (open.hash (), open.hash (), open.hash (), 3, 4);
 	{
 		badem::logger_mt logger;
-		auto error (false);
-		badem::mdb_store store (error, logger, file);
-		ASSERT_FALSE (error);
+		badem::mdb_store store (logger, file);
+		ASSERT_FALSE (store.init_error ());
 		auto transaction (store.tx_begin_write ());
-		badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0);
+		badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 		store.block_put (transaction, open.hash (), open, sideband);
 		auto status (mdb_put (store.env.tx (transaction), store.accounts_v0, badem::mdb_val (account), badem::mdb_val (sizeof (v5), &v5), 0));
 		ASSERT_EQ (0, status);
@@ -63,9 +60,8 @@ TEST (versioning, account_info_v5)
 	}
 
 	badem::logger_mt logger;
-	auto error (false);
-	badem::mdb_store store (error, logger, file);
-	ASSERT_FALSE (error);
+	badem::mdb_store store (logger, file);
+	ASSERT_FALSE (store.init_error ());
 	auto transaction (store.tx_begin_read ());
 	badem::account_info v_latest;
 	ASSERT_FALSE (store.account_get (transaction, account, v_latest));
@@ -73,12 +69,12 @@ TEST (versioning, account_info_v5)
 	ASSERT_EQ (v5.balance, v_latest.balance);
 	ASSERT_EQ (v5.head, v_latest.head);
 	ASSERT_EQ (v5.modified, v_latest.modified);
-	ASSERT_EQ (v5.rep_block, v_latest.rep_block);
+	ASSERT_EQ (v5.rep_block, open.hash ());
 	ASSERT_EQ (1, v_latest.block_count);
 	uint64_t confirmation_height;
 	ASSERT_FALSE (store.confirmation_height_get (transaction, account, confirmation_height));
 	ASSERT_EQ (0, confirmation_height);
-	ASSERT_EQ (badem::epoch::epoch_0, v_latest.epoch);
+	ASSERT_EQ (badem::epoch::epoch_0, v_latest.epoch ());
 }
 
 TEST (versioning, account_info_v13)
@@ -89,11 +85,10 @@ TEST (versioning, account_info_v13)
 	badem::account_info_v13 v13 (open.hash (), open.hash (), open.hash (), 3, 4, 10, badem::epoch::epoch_0);
 	{
 		badem::logger_mt logger;
-		auto error (false);
-		badem::mdb_store store (error, logger, file);
-		ASSERT_FALSE (error);
+		badem::mdb_store store (logger, file);
+		ASSERT_FALSE (store.init_error ());
 		auto transaction (store.tx_begin_write ());
-		badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0);
+		badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 		store.block_put (transaction, open.hash (), open, sideband);
 		auto status (mdb_put (store.env.tx (transaction), store.accounts_v0, badem::mdb_val (account), badem::mdb_val (v13), 0));
 		ASSERT_EQ (0, status);
@@ -101,9 +96,8 @@ TEST (versioning, account_info_v13)
 	}
 
 	badem::logger_mt logger;
-	auto error (false);
-	badem::mdb_store store (error, logger, file);
-	ASSERT_FALSE (error);
+	badem::mdb_store store (logger, file);
+	ASSERT_FALSE (store.init_error ());
 	auto transaction (store.tx_begin_read ());
 	badem::account_info v_latest;
 	ASSERT_FALSE (store.account_get (transaction, account, v_latest));
@@ -111,10 +105,10 @@ TEST (versioning, account_info_v13)
 	ASSERT_EQ (v13.balance, v_latest.balance);
 	ASSERT_EQ (v13.head, v_latest.head);
 	ASSERT_EQ (v13.modified, v_latest.modified);
-	ASSERT_EQ (v13.rep_block, v_latest.rep_block);
+	ASSERT_EQ (v13.rep_block, open.hash ());
 	ASSERT_EQ (v13.block_count, v_latest.block_count);
 	uint64_t confirmation_height;
 	ASSERT_FALSE (store.confirmation_height_get (transaction, account, confirmation_height));
 	ASSERT_EQ (0, confirmation_height);
-	ASSERT_EQ (v13.epoch, v_latest.epoch);
+	ASSERT_EQ (v13.epoch, v_latest.epoch ());
 }

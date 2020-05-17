@@ -62,12 +62,16 @@ network_params (network_constants::active_network)
 }
 
 badem::network_params::network_params (badem::badem_networks network_a) :
-network (network_a), ledger (network), voting (network), node (network), portmapping (network), bootstrap (network)
+network (network_a), protocol (network_a), ledger (network), voting (network), node (network), portmapping (network), bootstrap (network)
 {
 	unsigned constexpr kdf_full_work = 64 * 1024;
 	unsigned constexpr kdf_test_work = 8;
 	kdf_work = network.is_test_network () ? kdf_test_work : kdf_full_work;
-	header_magic_number = network.is_test_network () ? std::array<uint8_t, 2>{ { 'R', 'A' } } : network.is_beta_network () ? std::array<uint8_t, 2>{ { 'R', 'B' } } : std::array<uint8_t, 2>{ { 'R', 'C' } };
+	header_magic_number = network.is_test_network () ? std::array<uint8_t, 2>{ { 'R', 'A' } } : network.is_beta_network () ? std::array<uint8_t, 2>{ { 'N', 'B' } } : std::array<uint8_t, 2>{ { 'R', 'C' } };
+}
+
+badem::protocol_constants::protocol_constants (badem::badem_networks network_a)
+{
 }
 
 badem::ledger_constants::ledger_constants (badem::network_constants & network_constants) :
@@ -89,6 +93,17 @@ genesis_block (network_a == badem::badem_networks::badem_test_network ? badem_te
 genesis_amount (std::numeric_limits<badem::uint128_t>::max ()),
 burn_account (0)
 {
+	badem::link epoch_link_v1;
+	const char * epoch_message_v1 ("epoch v1 block");
+	strncpy ((char *)epoch_link_v1.bytes.data (), epoch_message_v1, epoch_link_v1.bytes.size ());
+	epochs.add (badem::epoch::epoch_1, genesis_account, epoch_link_v1);
+
+	badem::link epoch_link_v2;
+	auto badem_live_epoch_v2_signer = genesis_account;
+	auto epoch_v2_signer (network_a == badem::badem_networks::badem_test_network ? badem_test_account : network_a == badem::badem_networks::badem_beta_network ? badem_beta_account : badem_live_epoch_v2_signer);
+	const char * epoch_message_v2 ("epoch v2 block");
+	strncpy ((char *)epoch_link_v2.bytes.data (), epoch_message_v2, epoch_link_v2.bytes.size ());
+	epochs.add (badem::epoch::epoch_2, epoch_v2_signer, epoch_link_v2);
 }
 
 badem::random_constants::random_constants ()
@@ -107,7 +122,7 @@ badem::node_constants::node_constants (badem::network_constants & network_consta
 	backup_interval = std::chrono::minutes (5);
 	search_pending_interval = network_constants.is_test_network () ? std::chrono::seconds (1) : std::chrono::seconds (5 * 60);
 	peer_interval = search_pending_interval;
-	unchecked_cleaning_interval = std::chrono::hours (2);
+	unchecked_cleaning_interval = std::chrono::minutes (30);
 	process_confirmed_interval = network_constants.is_test_network () ? std::chrono::milliseconds (50) : std::chrono::milliseconds (500);
 	max_weight_samples = network_constants.is_live_network () ? 4032 : 864;
 	weight_period = 5 * 60; // 5 minutes
@@ -127,6 +142,10 @@ badem::portmapping_constants::portmapping_constants (badem::network_constants & 
 badem::bootstrap_constants::bootstrap_constants (badem::network_constants & network_constants)
 {
 	lazy_max_pull_blocks = network_constants.is_test_network () ? 2 : 512;
+	lazy_min_pull_blocks = network_constants.is_test_network () ? 1 : 32;
+	frontier_retry_limit = network_constants.is_test_network () ? 2 : 16;
+	lazy_retry_limit = network_constants.is_test_network () ? 2 : frontier_retry_limit * 10;
+	lazy_destinations_retry_limit = network_constants.is_test_network () ? 1 : frontier_retry_limit / 4;
 }
 
 /* Convenience constants for core_test which is always on the test network */
@@ -174,14 +193,14 @@ void badem::serialize_block (badem::stream & stream_a, badem::block const & bloc
 	block_a.serialize (stream_a);
 }
 
-badem::account_info::account_info (badem::block_hash const & head_a, badem::block_hash const & rep_block_a, badem::block_hash const & open_block_a, badem::amount const & balance_a, uint64_t modified_a, uint64_t block_count_a, badem::epoch epoch_a) :
+badem::account_info::account_info (badem::block_hash const & head_a, badem::account const & representative_a, badem::block_hash const & open_block_a, badem::amount const & balance_a, uint64_t modified_a, uint64_t block_count_a, badem::epoch epoch_a) :
 head (head_a),
-rep_block (rep_block_a),
+representative (representative_a),
 open_block (open_block_a),
 balance (balance_a),
 modified (modified_a),
 block_count (block_count_a),
-epoch (epoch_a)
+epoch_m (epoch_a)
 {
 }
 
@@ -191,11 +210,12 @@ bool badem::account_info::deserialize (badem::stream & stream_a)
 	try
 	{
 		badem::read (stream_a, head.bytes);
-		badem::read (stream_a, rep_block.bytes);
+		badem::read (stream_a, representative.bytes);
 		badem::read (stream_a, open_block.bytes);
 		badem::read (stream_a, balance.bytes);
 		badem::read (stream_a, modified);
 		badem::read (stream_a, block_count);
+		badem::read (stream_a, epoch_m);
 	}
 	catch (std::runtime_error const &)
 	{
@@ -207,7 +227,7 @@ bool badem::account_info::deserialize (badem::stream & stream_a)
 
 bool badem::account_info::operator== (badem::account_info const & other_a) const
 {
-	return head == other_a.head && rep_block == other_a.rep_block && open_block == other_a.open_block && balance == other_a.balance && modified == other_a.modified && block_count == other_a.block_count && epoch == other_a.epoch;
+	return head == other_a.head && representative == other_a.representative && open_block == other_a.open_block && balance == other_a.balance && modified == other_a.modified && block_count == other_a.block_count && epoch () == other_a.epoch ();
 }
 
 bool badem::account_info::operator!= (badem::account_info const & other_a) const
@@ -218,17 +238,23 @@ bool badem::account_info::operator!= (badem::account_info const & other_a) const
 size_t badem::account_info::db_size () const
 {
 	assert (reinterpret_cast<const uint8_t *> (this) == reinterpret_cast<const uint8_t *> (&head));
-	assert (reinterpret_cast<const uint8_t *> (&head) + sizeof (head) == reinterpret_cast<const uint8_t *> (&rep_block));
-	assert (reinterpret_cast<const uint8_t *> (&rep_block) + sizeof (rep_block) == reinterpret_cast<const uint8_t *> (&open_block));
+	assert (reinterpret_cast<const uint8_t *> (&head) + sizeof (head) == reinterpret_cast<const uint8_t *> (&representative));
+	assert (reinterpret_cast<const uint8_t *> (&representative) + sizeof (representative) == reinterpret_cast<const uint8_t *> (&open_block));
 	assert (reinterpret_cast<const uint8_t *> (&open_block) + sizeof (open_block) == reinterpret_cast<const uint8_t *> (&balance));
 	assert (reinterpret_cast<const uint8_t *> (&balance) + sizeof (balance) == reinterpret_cast<const uint8_t *> (&modified));
 	assert (reinterpret_cast<const uint8_t *> (&modified) + sizeof (modified) == reinterpret_cast<const uint8_t *> (&block_count));
-	return sizeof (head) + sizeof (rep_block) + sizeof (open_block) + sizeof (balance) + sizeof (modified) + sizeof (block_count);
+	assert (reinterpret_cast<const uint8_t *> (&block_count) + sizeof (block_count) == reinterpret_cast<const uint8_t *> (&epoch_m));
+	return sizeof (head) + sizeof (representative) + sizeof (open_block) + sizeof (balance) + sizeof (modified) + sizeof (block_count) + sizeof (epoch_m);
+}
+
+badem::epoch badem::account_info::epoch () const
+{
+	return epoch_m;
 }
 
 size_t badem::block_counts::sum () const
 {
-	return send + receive + open + change + state_v0 + state_v1;
+	return send + receive + open + change + state;
 }
 
 badem::pending_info::pending_info (badem::account const & source_a, badem::amount const & amount_a, badem::epoch epoch_a) :
@@ -245,6 +271,7 @@ bool badem::pending_info::deserialize (badem::stream & stream_a)
 	{
 		badem::read (stream_a, source.bytes);
 		badem::read (stream_a, amount.bytes);
+		badem::read (stream_a, epoch);
 	}
 	catch (std::runtime_error const &)
 	{
@@ -252,6 +279,11 @@ bool badem::pending_info::deserialize (badem::stream & stream_a)
 	}
 
 	return error;
+}
+
+size_t badem::pending_info::db_size () const
+{
+	return sizeof (source) + sizeof (amount) + sizeof (epoch);
 }
 
 bool badem::pending_info::operator== (badem::pending_info const & other_a) const
@@ -286,16 +318,17 @@ bool badem::pending_key::operator== (badem::pending_key const & other_a) const
 	return account == other_a.account && hash == other_a.hash;
 }
 
-badem::block_hash badem::pending_key::key () const
+badem::account const & badem::pending_key::key () const
 {
 	return account;
 }
 
-badem::unchecked_info::unchecked_info (std::shared_ptr<badem::block> block_a, badem::account const & account_a, uint64_t modified_a, badem::signature_verification verified_a) :
+badem::unchecked_info::unchecked_info (std::shared_ptr<badem::block> block_a, badem::account const & account_a, uint64_t modified_a, badem::signature_verification verified_a, bool confirmed_a) :
 block (block_a),
 account (account_a),
 modified (modified_a),
-verified (verified_a)
+verified (verified_a),
+confirmed (confirmed_a)
 {
 }
 
@@ -504,9 +537,9 @@ std::string badem::vote::hashes_string () const
 
 const std::string badem::vote::hash_prefix = "vote ";
 
-badem::uint256_union badem::vote::hash () const
+badem::block_hash badem::vote::hash () const
 {
-	badem::uint256_union result;
+	badem::block_hash result;
 	blake2b_state hash;
 	blake2b_init (&hash, sizeof (result.bytes));
 	if (blocks.size () > 1 || (!blocks.empty () && blocks.front ().which ()))
@@ -528,9 +561,9 @@ badem::uint256_union badem::vote::hash () const
 	return result;
 }
 
-badem::uint256_union badem::vote::full_hash () const
+badem::block_hash badem::vote::full_hash () const
 {
-	badem::uint256_union result;
+	badem::block_hash result;
 	blake2b_state state;
 	blake2b_init (&state, sizeof (result.bytes));
 	blake2b_update (&state, hash ().bytes.data (), sizeof (hash ().bytes));
@@ -678,8 +711,8 @@ std::shared_ptr<badem::vote> badem::vote_uniquer::unique (std::shared_ptr<badem:
 		{
 			result->blocks.front () = uniquer.unique (boost::get<std::shared_ptr<badem::block>> (result->blocks.front ()));
 		}
-		badem::uint256_union key (vote_a->full_hash ());
-		std::lock_guard<std::mutex> lock (mutex);
+		badem::block_hash key (vote_a->full_hash ());
+		badem::lock_guard<std::mutex> lock (mutex);
 		auto & existing (votes[key]);
 		if (auto block_l = existing.lock ())
 		{
@@ -718,7 +751,7 @@ std::shared_ptr<badem::vote> badem::vote_uniquer::unique (std::shared_ptr<badem:
 
 size_t badem::vote_uniquer::size ()
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	return votes.size ();
 }
 
@@ -747,4 +780,45 @@ badem::genesis::genesis ()
 badem::block_hash badem::genesis::hash () const
 {
 	return open->hash ();
+}
+
+badem::wallet_id badem::random_wallet_id ()
+{
+	badem::wallet_id wallet_id;
+	badem::uint256_union dummy_secret;
+	random_pool::generate_block (dummy_secret.bytes.data (), dummy_secret.bytes.size ());
+	ed25519_publickey (dummy_secret.bytes.data (), wallet_id.bytes.data ());
+	return wallet_id;
+}
+
+badem::unchecked_key::unchecked_key (badem::block_hash const & previous_a, badem::block_hash const & hash_a) :
+previous (previous_a),
+hash (hash_a)
+{
+}
+
+bool badem::unchecked_key::deserialize (badem::stream & stream_a)
+{
+	auto error (false);
+	try
+	{
+		badem::read (stream_a, previous.bytes);
+		badem::read (stream_a, hash.bytes);
+	}
+	catch (std::runtime_error const &)
+	{
+		error = true;
+	}
+
+	return error;
+}
+
+bool badem::unchecked_key::operator== (badem::unchecked_key const & other_a) const
+{
+	return previous == other_a.previous && hash == other_a.hash;
+}
+
+badem::block_hash const & badem::unchecked_key::key () const
+{
+	return previous;
 }

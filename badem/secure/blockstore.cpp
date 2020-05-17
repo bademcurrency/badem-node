@@ -3,13 +3,14 @@
 #include <boost/endian/conversion.hpp>
 #include <boost/polymorphic_cast.hpp>
 
-badem::block_sideband::block_sideband (badem::block_type type_a, badem::account const & account_a, badem::block_hash const & successor_a, badem::amount const & balance_a, uint64_t height_a, uint64_t timestamp_a) :
+badem::block_sideband::block_sideband (badem::block_type type_a, badem::account const & account_a, badem::block_hash const & successor_a, badem::amount const & balance_a, uint64_t height_a, uint64_t timestamp_a, badem::epoch epoch_a) :
 type (type_a),
 successor (successor_a),
 account (account_a),
 balance (balance_a),
 height (height_a),
-timestamp (timestamp_a)
+timestamp (timestamp_a),
+epoch (epoch_a)
 {
 }
 
@@ -30,6 +31,10 @@ size_t badem::block_sideband::size (badem::block_type type_a)
 		result += sizeof (balance);
 	}
 	result += sizeof (timestamp);
+	if (type_a == badem::block_type::state)
+	{
+		result += sizeof (epoch);
+	}
 	return result;
 }
 
@@ -49,6 +54,10 @@ void badem::block_sideband::serialize (badem::stream & stream_a) const
 		badem::write (stream_a, balance.bytes);
 	}
 	badem::write (stream_a, boost::endian::native_to_big (timestamp));
+	if (type == badem::block_type::state)
+	{
+		badem::write (stream_a, epoch);
+	}
 }
 
 bool badem::block_sideband::deserialize (badem::stream & stream_a)
@@ -76,6 +85,10 @@ bool badem::block_sideband::deserialize (badem::stream & stream_a)
 		}
 		badem::read (stream_a, timestamp);
 		boost::endian::big_to_native_inplace (timestamp);
+		if (type == badem::block_type::state)
+		{
+			badem::read (stream_a, epoch);
+		}
 	}
 	catch (std::runtime_error &)
 	{
@@ -85,9 +98,10 @@ bool badem::block_sideband::deserialize (badem::stream & stream_a)
 	return result;
 }
 
-badem::summation_visitor::summation_visitor (badem::transaction const & transaction_a, badem::block_store const & store_a) :
+badem::summation_visitor::summation_visitor (badem::transaction const & transaction_a, badem::block_store const & store_a, bool is_v14_upgrade_a) :
 transaction (transaction_a),
-store (store_a)
+store (store_a),
+is_v14_upgrade (is_v14_upgrade_a)
 {
 }
 
@@ -244,7 +258,7 @@ badem::uint128_t badem::summation_visitor::compute_internal (badem::summation_vi
 				}
 				else
 				{
-					auto block (store.block_get (transaction, current->balance_hash));
+					auto block (block_get (transaction, current->balance_hash));
 					assert (block != nullptr);
 					block->visit (*this);
 				}
@@ -264,7 +278,7 @@ badem::uint128_t badem::summation_visitor::compute_internal (badem::summation_vi
 			{
 				if (!current->amount_hash.is_zero ())
 				{
-					auto block (store.block_get (transaction, current->amount_hash));
+					auto block = block_get (transaction, current->amount_hash);
 					if (block != nullptr)
 					{
 						block->visit (*this);
@@ -273,7 +287,7 @@ badem::uint128_t badem::summation_visitor::compute_internal (badem::summation_vi
 					{
 						if (current->amount_hash == network_params.ledger.genesis_account)
 						{
-							sum_set (std::numeric_limits<badem::uint128_t>::max ());
+							sum_set ((std::numeric_limits<badem::uint128_t>::max) ());
 							current->amount_hash = 0;
 						}
 						else
@@ -320,6 +334,11 @@ badem::uint128_t badem::summation_visitor::compute_amount (badem::block_hash con
 badem::uint128_t badem::summation_visitor::compute_balance (badem::block_hash const & block_hash)
 {
 	return compute_internal (summation_type::balance, block_hash);
+}
+
+std::shared_ptr<badem::block> badem::summation_visitor::block_get (badem::transaction const & transaction_a, badem::block_hash const & hash_a) const
+{
+	return is_v14_upgrade ? store.block_get_v14 (transaction, hash_a) : store.block_get (transaction, hash_a);
 }
 
 badem::representative_visitor::representative_visitor (badem::transaction const & transaction_a, badem::block_store & store_a) :
@@ -394,6 +413,10 @@ void badem::read_transaction::refresh () const
 badem::write_transaction::write_transaction (std::unique_ptr<badem::write_transaction_impl> write_transaction_impl) :
 impl (std::move (write_transaction_impl))
 {
+	/*
+	 * For IO threads, we do not want them to block on creating write transactions.
+	 */
+	assert (badem::thread_role::get () != badem::thread_role::name::io);
 }
 
 void * badem::write_transaction::get_handle () const
@@ -409,4 +432,9 @@ void badem::write_transaction::commit () const
 void badem::write_transaction::renew ()
 {
 	impl->renew ();
+}
+
+bool badem::write_transaction::contains (badem::tables table_a) const
+{
+	return impl->contains (table_a);
 }

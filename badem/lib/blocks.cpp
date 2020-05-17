@@ -76,7 +76,7 @@ size_t badem::block::size (badem::block_type type_a)
 
 badem::block_hash badem::block::hash () const
 {
-	badem::uint256_union result;
+	badem::block_hash result;
 	blake2b_state hash_l;
 	auto status (blake2b_init (&hash_l, sizeof (result.bytes)));
 	assert (status == 0);
@@ -100,29 +100,39 @@ badem::block_hash badem::block::full_hash () const
 	return result;
 }
 
-badem::account badem::block::representative () const
+badem::account const & badem::block::representative () const
 {
-	return 0;
+	static badem::account rep{ 0 };
+	return rep;
 }
 
-badem::block_hash badem::block::source () const
+badem::block_hash const & badem::block::source () const
 {
-	return 0;
+	static badem::block_hash source{ 0 };
+	return source;
 }
 
-badem::block_hash badem::block::link () const
+badem::link const & badem::block::link () const
 {
-	return 0;
+	static badem::link link{ 0 };
+	return link;
 }
 
-badem::account badem::block::account () const
+badem::account const & badem::block::account () const
 {
-	return 0;
+	static badem::account account{ 0 };
+	return account;
 }
 
 badem::qualified_root badem::block::qualified_root () const
 {
 	return badem::qualified_root (previous (), root ());
+}
+
+badem::amount const & badem::block::balance () const
+{
+	static badem::amount amount{ 0 };
+	return amount;
 }
 
 void badem::send_block::visit (badem::block_visitor & visitor_a) const
@@ -227,12 +237,12 @@ bool badem::send_block::deserialize (badem::stream & stream_a)
 	return error;
 }
 
-void badem::send_block::serialize_json (std::string & string_a) const
+void badem::send_block::serialize_json (std::string & string_a, bool single_line) const
 {
 	boost::property_tree::ptree tree;
 	serialize_json (tree);
 	std::stringstream ostream;
-	boost::property_tree::write_json (ostream, tree);
+	boost::property_tree::write_json (ostream, tree, !single_line);
 	string_a = ostream.str ();
 }
 
@@ -368,22 +378,27 @@ bool badem::send_block::operator== (badem::send_block const & other_a) const
 	return result;
 }
 
-badem::block_hash badem::send_block::previous () const
+badem::block_hash const & badem::send_block::previous () const
 {
 	return hashables.previous;
 }
 
-badem::block_hash badem::send_block::root () const
+badem::root const & badem::send_block::root () const
 {
 	return hashables.previous;
 }
 
-badem::signature badem::send_block::block_signature () const
+badem::amount const & badem::send_block::balance () const
+{
+	return hashables.balance;
+}
+
+badem::signature const & badem::send_block::block_signature () const
 {
 	return signature;
 }
 
-void badem::send_block::signature_set (badem::uint512_union const & signature_a)
+void badem::send_block::signature_set (badem::signature const & signature_a)
 {
 	signature = signature_a;
 }
@@ -508,13 +523,13 @@ void badem::open_block::block_work_set (uint64_t work_a)
 	work = work_a;
 }
 
-badem::block_hash badem::open_block::previous () const
+badem::block_hash const & badem::open_block::previous () const
 {
-	badem::block_hash result (0);
+	static badem::block_hash result{ 0 };
 	return result;
 }
 
-badem::account badem::open_block::account () const
+badem::account const & badem::open_block::account () const
 {
 	return hashables.account;
 }
@@ -547,12 +562,12 @@ bool badem::open_block::deserialize (badem::stream & stream_a)
 	return error;
 }
 
-void badem::open_block::serialize_json (std::string & string_a) const
+void badem::open_block::serialize_json (std::string & string_a, bool single_line) const
 {
 	boost::property_tree::ptree tree;
 	serialize_json (tree);
 	std::stringstream ostream;
-	boost::property_tree::write_json (ostream, tree);
+	boost::property_tree::write_json (ostream, tree, !single_line);
 	string_a = ostream.str ();
 }
 
@@ -629,27 +644,27 @@ bool badem::open_block::valid_predecessor (badem::block const & block_a) const
 	return false;
 }
 
-badem::block_hash badem::open_block::source () const
+badem::block_hash const & badem::open_block::source () const
 {
 	return hashables.source;
 }
 
-badem::block_hash badem::open_block::root () const
+badem::root const & badem::open_block::root () const
 {
 	return hashables.account;
 }
 
-badem::account badem::open_block::representative () const
+badem::account const & badem::open_block::representative () const
 {
 	return hashables.representative;
 }
 
-badem::signature badem::open_block::block_signature () const
+badem::signature const & badem::open_block::block_signature () const
 {
 	return signature;
 }
 
-void badem::open_block::signature_set (badem::uint512_union const & signature_a)
+void badem::open_block::signature_set (badem::signature const & signature_a)
 {
 	signature = signature_a;
 }
@@ -758,7 +773,7 @@ void badem::change_block::block_work_set (uint64_t work_a)
 	work = work_a;
 }
 
-badem::block_hash badem::change_block::previous () const
+badem::block_hash const & badem::change_block::previous () const
 {
 	return hashables.previous;
 }
@@ -789,12 +804,12 @@ bool badem::change_block::deserialize (badem::stream & stream_a)
 	return error;
 }
 
-void badem::change_block::serialize_json (std::string & string_a) const
+void badem::change_block::serialize_json (std::string & string_a, bool single_line) const
 {
 	boost::property_tree::ptree tree;
 	serialize_json (tree);
 	std::stringstream ostream;
-	boost::property_tree::write_json (ostream, tree);
+	boost::property_tree::write_json (ostream, tree, !single_line);
 	string_a = ostream.str ();
 }
 
@@ -878,27 +893,27 @@ bool badem::change_block::valid_predecessor (badem::block const & block_a) const
 	return result;
 }
 
-badem::block_hash badem::change_block::root () const
+badem::root const & badem::change_block::root () const
 {
 	return hashables.previous;
 }
 
-badem::account badem::change_block::representative () const
+badem::account const & badem::change_block::representative () const
 {
 	return hashables.representative;
 }
 
-badem::signature badem::change_block::block_signature () const
+badem::signature const & badem::change_block::block_signature () const
 {
 	return signature;
 }
 
-void badem::change_block::signature_set (badem::uint512_union const & signature_a)
+void badem::change_block::signature_set (badem::signature const & signature_a)
 {
 	signature = signature_a;
 }
 
-badem::state_hashables::state_hashables (badem::account const & account_a, badem::block_hash const & previous_a, badem::account const & representative_a, badem::amount const & balance_a, badem::uint256_union const & link_a) :
+badem::state_hashables::state_hashables (badem::account const & account_a, badem::block_hash const & previous_a, badem::account const & representative_a, badem::amount const & balance_a, badem::link const & link_a) :
 account (account_a),
 previous (previous_a),
 representative (representative_a),
@@ -965,7 +980,7 @@ void badem::state_hashables::hash (blake2b_state & hash_a) const
 	blake2b_update (&hash_a, link.bytes.data (), sizeof (link.bytes));
 }
 
-badem::state_block::state_block (badem::account const & account_a, badem::block_hash const & previous_a, badem::account const & representative_a, badem::amount const & balance_a, badem::uint256_union const & link_a, badem::raw_key const & prv_a, badem::public_key const & pub_a, uint64_t work_a) :
+badem::state_block::state_block (badem::account const & account_a, badem::block_hash const & previous_a, badem::account const & representative_a, badem::amount const & balance_a, badem::link const & link_a, badem::raw_key const & prv_a, badem::public_key const & pub_a, uint64_t work_a) :
 hashables (account_a, previous_a, representative_a, balance_a, link_a),
 signature (badem::sign_message (prv_a, pub_a, hash ())),
 work (work_a)
@@ -1034,12 +1049,12 @@ void badem::state_block::block_work_set (uint64_t work_a)
 	work = work_a;
 }
 
-badem::block_hash badem::state_block::previous () const
+badem::block_hash const & badem::state_block::previous () const
 {
 	return hashables.previous;
 }
 
-badem::account badem::state_block::account () const
+badem::account const & badem::state_block::account () const
 {
 	return hashables.account;
 }
@@ -1077,12 +1092,12 @@ bool badem::state_block::deserialize (badem::stream & stream_a)
 	return error;
 }
 
-void badem::state_block::serialize_json (std::string & string_a) const
+void badem::state_block::serialize_json (std::string & string_a, bool single_line) const
 {
 	boost::property_tree::ptree tree;
 	serialize_json (tree);
 	std::stringstream ostream;
-	boost::property_tree::write_json (ostream, tree);
+	boost::property_tree::write_json (ostream, tree, !single_line);
 	string_a = ostream.str ();
 }
 
@@ -1172,27 +1187,39 @@ bool badem::state_block::valid_predecessor (badem::block const & block_a) const
 	return true;
 }
 
-badem::block_hash badem::state_block::root () const
+badem::root const & badem::state_block::root () const
 {
-	return !hashables.previous.is_zero () ? hashables.previous : hashables.account;
+	if (!hashables.previous.is_zero ())
+	{
+		return hashables.previous;
+	}
+	else
+	{
+		return hashables.account;
+	}
 }
 
-badem::block_hash badem::state_block::link () const
+badem::link const & badem::state_block::link () const
 {
 	return hashables.link;
 }
 
-badem::account badem::state_block::representative () const
+badem::account const & badem::state_block::representative () const
 {
 	return hashables.representative;
 }
 
-badem::signature badem::state_block::block_signature () const
+badem::amount const & badem::state_block::balance () const
+{
+	return hashables.balance;
+}
+
+badem::signature const & badem::state_block::block_signature () const
 {
 	return signature;
 }
 
-void badem::state_block::signature_set (badem::uint512_union const & signature_a)
+void badem::state_block::signature_set (badem::signature const & signature_a)
 {
 	signature = signature_a;
 }
@@ -1349,12 +1376,12 @@ bool badem::receive_block::deserialize (badem::stream & stream_a)
 	return error;
 }
 
-void badem::receive_block::serialize_json (std::string & string_a) const
+void badem::receive_block::serialize_json (std::string & string_a, bool single_line) const
 {
 	boost::property_tree::ptree tree;
 	serialize_json (tree);
 	std::stringstream ostream;
-	boost::property_tree::write_json (ostream, tree);
+	boost::property_tree::write_json (ostream, tree, !single_line);
 	string_a = ostream.str ();
 }
 
@@ -1488,27 +1515,27 @@ bool badem::receive_block::valid_predecessor (badem::block const & block_a) cons
 	return result;
 }
 
-badem::block_hash badem::receive_block::previous () const
+badem::block_hash const & badem::receive_block::previous () const
 {
 	return hashables.previous;
 }
 
-badem::block_hash badem::receive_block::source () const
+badem::block_hash const & badem::receive_block::source () const
 {
 	return hashables.source;
 }
 
-badem::block_hash badem::receive_block::root () const
+badem::root const & badem::receive_block::root () const
 {
 	return hashables.previous;
 }
 
-badem::signature badem::receive_block::block_signature () const
+badem::signature const & badem::receive_block::block_signature () const
 {
 	return signature;
 }
 
-void badem::receive_block::signature_set (badem::uint512_union const & signature_a)
+void badem::receive_block::signature_set (badem::signature const & signature_a)
 {
 	signature = signature_a;
 }
@@ -1567,7 +1594,7 @@ std::shared_ptr<badem::block> badem::block_uniquer::unique (std::shared_ptr<bade
 	if (result != nullptr)
 	{
 		badem::uint256_union key (block_a->full_hash ());
-		std::lock_guard<std::mutex> lock (mutex);
+		badem::lock_guard<std::mutex> lock (mutex);
 		auto & existing (blocks[key]);
 		if (auto block_l = existing.lock ())
 		{
@@ -1604,7 +1631,7 @@ std::shared_ptr<badem::block> badem::block_uniquer::unique (std::shared_ptr<bade
 
 size_t badem::block_uniquer::size ()
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	return blocks.size ();
 }
 

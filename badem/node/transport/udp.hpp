@@ -24,11 +24,11 @@ namespace transport
 		friend class badem::transport::udp_channels;
 
 	public:
-		channel_udp (badem::transport::udp_channels &, badem::endpoint const &, unsigned = badem::protocol_version);
+		channel_udp (badem::transport::udp_channels &, badem::endpoint const &, uint8_t protocol_version);
 		size_t hash_code () const override;
 		bool operator== (badem::transport::channel const &) const override;
-		void send_buffer (std::shared_ptr<std::vector<uint8_t>>, badem::stat::detail, std::function<void(boost::system::error_code const &, size_t)> const & = nullptr) override;
-		std::function<void(boost::system::error_code const &, size_t)> callback (std::shared_ptr<std::vector<uint8_t>>, badem::stat::detail, std::function<void(boost::system::error_code const &, size_t)> const & = nullptr) const override;
+		void send_buffer (badem::shared_const_buffer const &, badem::stat::detail, std::function<void(boost::system::error_code const &, size_t)> const & = nullptr) override;
+		std::function<void(boost::system::error_code const &, size_t)> callback (badem::stat::detail, std::function<void(boost::system::error_code const &, size_t)> const & = nullptr) const override;
 		std::string to_string () const override;
 		bool operator== (badem::transport::channel_udp const & other_a) const
 		{
@@ -37,13 +37,13 @@ namespace transport
 
 		badem::endpoint get_endpoint () const override
 		{
-			std::lock_guard<std::mutex> lk (channel_mutex);
+			badem::lock_guard<std::mutex> lk (channel_mutex);
 			return endpoint;
 		}
 
 		badem::tcp_endpoint get_tcp_endpoint () const override
 		{
-			std::lock_guard<std::mutex> lk (channel_mutex);
+			badem::lock_guard<std::mutex> lk (channel_mutex);
 			return badem::transport::map_endpoint_to_tcp (endpoint);
 		}
 
@@ -73,11 +73,11 @@ namespace transport
 		void clean_node_id (badem::account const &);
 		void clean_node_id (badem::endpoint const &, badem::account const &);
 		// Get the next peer for attempting a tcp bootstrap connection
-		badem::tcp_endpoint bootstrap_peer (uint8_t connection_protocol_version_min = badem::protocol_version_reasonable_min);
+		badem::tcp_endpoint bootstrap_peer (uint8_t connection_protocol_version_min);
 		void receive ();
 		void start ();
 		void stop ();
-		void send (boost::asio::const_buffer buffer_a, badem::endpoint endpoint_a, std::function<void(boost::system::error_code const &, size_t)> const & callback_a);
+		void send (badem::shared_const_buffer const & buffer_a, badem::endpoint endpoint_a, std::function<void(boost::system::error_code const &, size_t)> const & callback_a);
 		badem::endpoint get_local_endpoint () const;
 		void receive_action (badem::message_buffer *);
 		void process_packets ();

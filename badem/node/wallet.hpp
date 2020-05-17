@@ -53,6 +53,7 @@ public:
 	badem::uint256_union check (badem::transaction const &);
 	bool rekey (badem::transaction const &, std::string const &);
 	bool valid_password (badem::transaction const &);
+	bool valid_public_key (badem::public_key const &);
 	bool attempt_password (badem::transaction const &, std::string const &);
 	void wallet_key (badem::raw_key &, badem::transaction const &);
 	void seed (badem::raw_key &, badem::transaction const &);
@@ -60,7 +61,7 @@ public:
 	badem::key_type key_type (badem::wallet_value const &);
 	badem::public_key deterministic_insert (badem::transaction const &);
 	badem::public_key deterministic_insert (badem::transaction const &, uint32_t const);
-	void deterministic_key (badem::raw_key &, badem::transaction const &, uint32_t);
+	badem::private_key deterministic_key (badem::transaction const &, uint32_t);
 	uint32_t deterministic_index_get (badem::transaction const &);
 	void deterministic_index_set (badem::transaction const &, uint32_t);
 	void deterministic_clear (badem::transaction const &);
@@ -69,17 +70,17 @@ public:
 	badem::account representative (badem::transaction const &);
 	void representative_set (badem::transaction const &, badem::account const &);
 	badem::public_key insert_adhoc (badem::transaction const &, badem::raw_key const &);
-	void insert_watch (badem::transaction const &, badem::public_key const &);
-	void erase (badem::transaction const &, badem::public_key const &);
-	badem::wallet_value entry_get_raw (badem::transaction const &, badem::public_key const &);
-	void entry_put_raw (badem::transaction const &, badem::public_key const &, badem::wallet_value const &);
-	bool fetch (badem::transaction const &, badem::public_key const &, badem::raw_key &);
-	bool exists (badem::transaction const &, badem::public_key const &);
+	bool insert_watch (badem::transaction const &, badem::account const &);
+	void erase (badem::transaction const &, badem::account const &);
+	badem::wallet_value entry_get_raw (badem::transaction const &, badem::account const &);
+	void entry_put_raw (badem::transaction const &, badem::account const &, badem::wallet_value const &);
+	bool fetch (badem::transaction const &, badem::account const &, badem::raw_key &);
+	bool exists (badem::transaction const &, badem::account const &);
 	void destroy (badem::transaction const &);
-	badem::store_iterator<badem::uint256_union, badem::wallet_value> find (badem::transaction const &, badem::uint256_union const &);
-	badem::store_iterator<badem::uint256_union, badem::wallet_value> begin (badem::transaction const &, badem::uint256_union const &);
-	badem::store_iterator<badem::uint256_union, badem::wallet_value> begin (badem::transaction const &);
-	badem::store_iterator<badem::uint256_union, badem::wallet_value> end ();
+	badem::store_iterator<badem::account, badem::wallet_value> find (badem::transaction const &, badem::account const &);
+	badem::store_iterator<badem::account, badem::wallet_value> begin (badem::transaction const &, badem::account const &);
+	badem::store_iterator<badem::account, badem::wallet_value> begin (badem::transaction const &);
+	badem::store_iterator<badem::account, badem::wallet_value> end ();
 	void derive_key (badem::raw_key &, badem::transaction const &, std::string const &);
 	void serialize_json (badem::transaction const &, std::string &);
 	void write_backup (badem::transaction const &, boost::filesystem::path const &);
@@ -98,19 +99,19 @@ public:
 	static unsigned const version_2 = 2;
 	static unsigned const version_3 = 3;
 	static unsigned const version_4 = 4;
-	unsigned const version_current = version_4;
-	static badem::uint256_union const version_special;
-	static badem::uint256_union const wallet_key_special;
-	static badem::uint256_union const salt_special;
-	static badem::uint256_union const check_special;
-	static badem::uint256_union const representative_special;
-	static badem::uint256_union const seed_special;
-	static badem::uint256_union const deterministic_index_special;
+	static unsigned constexpr version_current = version_4;
+	static badem::account const version_special;
+	static badem::account const wallet_key_special;
+	static badem::account const salt_special;
+	static badem::account const check_special;
+	static badem::account const representative_special;
+	static badem::account const seed_special;
+	static badem::account const deterministic_index_special;
 	static size_t const check_iv_index;
 	static size_t const seed_iv_index;
 	static int const special_count;
 	badem::kdf & kdf;
-	MDB_dbi handle;
+	MDB_dbi handle{ 0 };
 	std::recursive_mutex mutex;
 
 private:
@@ -123,13 +124,14 @@ public:
 	std::shared_ptr<badem::block> change_action (badem::account const &, badem::account const &, uint64_t = 0, bool = true);
 	std::shared_ptr<badem::block> receive_action (badem::block const &, badem::account const &, badem::uint128_union const &, uint64_t = 0, bool = true);
 	std::shared_ptr<badem::block> send_action (badem::account const &, badem::account const &, badem::uint128_t const &, uint64_t = 0, bool = true, boost::optional<std::string> = {});
+	bool action_complete (std::shared_ptr<badem::block> const &, badem::account const &, bool const);
 	wallet (bool &, badem::transaction &, badem::wallets &, std::string const &);
 	wallet (bool &, badem::transaction &, badem::wallets &, std::string const &, std::string const &);
 	void enter_initial_password ();
 	bool enter_password (badem::transaction const &, std::string const &);
 	badem::public_key insert_adhoc (badem::raw_key const &, bool = true);
 	badem::public_key insert_adhoc (badem::transaction const &, badem::raw_key const &, bool = true);
-	void insert_watch (badem::transaction const &, badem::public_key const &);
+	bool insert_watch (badem::transaction const &, badem::public_key const &);
 	badem::public_key deterministic_insert (badem::transaction const &, bool = true);
 	badem::public_key deterministic_insert (uint32_t, bool = true);
 	badem::public_key deterministic_insert (bool = true);
@@ -142,9 +144,9 @@ public:
 	void receive_async (std::shared_ptr<badem::block>, badem::account const &, badem::uint128_t const &, std::function<void(std::shared_ptr<badem::block>)> const &, uint64_t = 0, bool = true);
 	badem::block_hash send_sync (badem::account const &, badem::account const &, badem::uint128_t const &);
 	void send_async (badem::account const &, badem::account const &, badem::uint128_t const &, std::function<void(std::shared_ptr<badem::block>)> const &, uint64_t = 0, bool = true, boost::optional<std::string> = {});
-	void work_cache_blocking (badem::account const &, badem::block_hash const &);
-	void work_update (badem::transaction const &, badem::account const &, badem::block_hash const &, uint64_t);
-	void work_ensure (badem::account const &, badem::block_hash const &);
+	void work_cache_blocking (badem::account const &, badem::root const &);
+	void work_update (badem::transaction const &, badem::account const &, badem::root const &, uint64_t);
+	void work_ensure (badem::account const &, badem::root const &);
 	bool search_pending ();
 	void init_free_accounts (badem::transaction const &);
 	uint32_t deterministic_check (badem::transaction const & transaction_a, uint32_t index);
@@ -161,22 +163,22 @@ public:
 	std::unordered_set<badem::account> representatives;
 };
 
-class work_watcher
+class work_watcher final : public std::enable_shared_from_this<badem::work_watcher>
 {
 public:
 	work_watcher (badem::node &);
 	~work_watcher ();
 	void stop ();
-	void run ();
 	void add (std::shared_ptr<badem::block>);
+	void update (badem::qualified_root const &, std::shared_ptr<badem::state_block>);
+	void watching (badem::qualified_root const &, std::shared_ptr<badem::state_block>);
 	void remove (std::shared_ptr<badem::block>);
 	bool is_watched (badem::qualified_root const &);
+	size_t size ();
 	std::mutex mutex;
 	badem::node & node;
-	std::condition_variable condition;
+	std::unordered_map<badem::qualified_root, std::shared_ptr<badem::state_block>> watched;
 	std::atomic<bool> stopped;
-	std::unordered_map<badem::qualified_root, std::shared_ptr<badem::state_block>> blocks;
-	std::thread thread;
 };
 /**
  * The wallets set is all the wallets a node controls.
@@ -187,40 +189,42 @@ class wallets final
 public:
 	wallets (bool, badem::node &);
 	~wallets ();
-	std::shared_ptr<badem::wallet> open (badem::uint256_union const &);
-	std::shared_ptr<badem::wallet> create (badem::uint256_union const &);
-	bool search_pending (badem::uint256_union const &);
+	std::shared_ptr<badem::wallet> open (badem::wallet_id const &);
+	std::shared_ptr<badem::wallet> create (badem::wallet_id const &);
+	bool search_pending (badem::wallet_id const &);
 	void search_pending_all ();
-	void destroy (badem::uint256_union const &);
+	void destroy (badem::wallet_id const &);
 	void reload ();
 	void do_wallet_actions ();
 	void queue_wallet_action (badem::uint128_t const &, std::shared_ptr<badem::wallet>, std::function<void(badem::wallet &)> const &);
-	void foreach_representative (badem::transaction const &, std::function<void(badem::public_key const &, badem::raw_key const &)> const &);
+	void foreach_representative (std::function<void(badem::public_key const &, badem::raw_key const &)> const &);
 	bool exists (badem::transaction const &, badem::public_key const &);
 	void stop ();
 	void clear_send_ids (badem::transaction const &);
+	bool check_rep (badem::account const &, badem::uint128_t const &);
 	void compute_reps ();
 	void ongoing_compute_reps ();
 	void split_if_needed (badem::transaction &, badem::block_store &);
 	void move_table (std::string const &, MDB_txn *, MDB_txn *);
 	badem::network_params network_params;
 	std::function<void(bool)> observer;
-	std::unordered_map<badem::uint256_union, std::shared_ptr<badem::wallet>> items;
+	std::unordered_map<badem::wallet_id, std::shared_ptr<badem::wallet>> items;
 	std::multimap<badem::uint128_t, std::pair<std::shared_ptr<badem::wallet>, std::function<void(badem::wallet &)>>, std::greater<badem::uint128_t>> actions;
 	std::mutex mutex;
 	std::mutex action_mutex;
-	std::condition_variable condition;
+	badem::condition_variable condition;
 	badem::kdf kdf;
 	MDB_dbi handle;
 	MDB_dbi send_action_ids;
 	badem::node & node;
 	badem::mdb_env & env;
 	std::atomic<bool> stopped;
-	badem::work_watcher watcher;
+	std::shared_ptr<badem::work_watcher> watcher;
 	boost::thread thread;
 	static badem::uint128_t const generate_priority;
 	static badem::uint128_t const high_priority;
 	std::atomic<uint64_t> reps_count{ 0 };
+	std::atomic<uint64_t> half_principal_reps_count{ 0 }; // Representatives with at least 50% of principal representative requirements
 
 	/** Start read-write transaction */
 	badem::write_transaction tx_begin_write ();
@@ -235,11 +239,14 @@ class wallets_store
 {
 public:
 	virtual ~wallets_store () = default;
+	virtual bool init_error () const = 0;
 };
 class mdb_wallets_store final : public wallets_store
 {
 public:
-	mdb_wallets_store (bool &, boost::filesystem::path const &, int lmdb_max_dbs = 128);
+	mdb_wallets_store (boost::filesystem::path const &, int lmdb_max_dbs = 128);
 	badem::mdb_env environment;
+	bool init_error () const override;
+	bool error{ false };
 };
 }

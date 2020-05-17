@@ -10,11 +10,18 @@
 
 std::bitset<16> constexpr badem::message_header::block_type_mask;
 std::bitset<16> constexpr badem::message_header::count_mask;
-
+namespace
+{
+badem::protocol_constants const & get_protocol_constants ()
+{
+	static badem::network_params params;
+	return params.protocol;
+}
+}
 badem::message_header::message_header (badem::message_type type_a) :
-version_max (badem::protocol_version),
-version_using (badem::protocol_version),
-version_min (badem::protocol_version_min),
+version_max (get_protocol_constants ().protocol_version),
+version_using (get_protocol_constants ().protocol_version),
+version_min (get_protocol_constants ().protocol_version_min),
 type (type_a)
 {
 }
@@ -278,11 +285,7 @@ void badem::message_parser::deserialize_buffer (uint8_t const * buffer_a, size_t
 		badem::message_header header (error, stream);
 		if (!error)
 		{
-			if (network_constants.is_beta_network () && header.version_using < badem::protocol_version_reasonable_min)
-			{
-				status = parse_status::outdated_version;
-			}
-			else if (header.version_using < badem::protocol_version_min)
+			if (header.version_using < get_protocol_constants ().protocol_version_min)
 			{
 				status = parse_status::outdated_version;
 			}
@@ -554,7 +557,7 @@ block (block_a)
 	header.block_type_set (block->type ());
 }
 
-badem::confirm_req::confirm_req (std::vector<std::pair<badem::block_hash, badem::block_hash>> const & roots_hashes_a) :
+badem::confirm_req::confirm_req (std::vector<std::pair<badem::block_hash, badem::root>> const & roots_hashes_a) :
 message (badem::message_type::confirm_req),
 roots_hashes (roots_hashes_a)
 {
@@ -564,9 +567,9 @@ roots_hashes (roots_hashes_a)
 	header.count_set (static_cast<uint8_t> (roots_hashes.size ()));
 }
 
-badem::confirm_req::confirm_req (badem::block_hash const & hash_a, badem::block_hash const & root_a) :
+badem::confirm_req::confirm_req (badem::block_hash const & hash_a, badem::root const & root_a) :
 message (badem::message_type::confirm_req),
-roots_hashes (std::vector<std::pair<badem::block_hash, badem::block_hash>> (1, std::make_pair (hash_a, root_a)))
+roots_hashes (std::vector<std::pair<badem::block_hash, badem::root>> (1, std::make_pair (hash_a, root_a)))
 {
 	assert (!roots_hashes.empty ());
 	// not_a_block (1) block type for hashes + roots request
@@ -614,13 +617,10 @@ bool badem::confirm_req::deserialize (badem::stream & stream_a, badem::block_uni
 				badem::block_hash block_hash (0);
 				badem::block_hash root (0);
 				read (stream_a, block_hash);
-				if (!block_hash.is_zero ())
+				read (stream_a, root);
+				if (!block_hash.is_zero () || !root.is_zero ())
 				{
-					read (stream_a, root);
-					if (!root.is_zero ())
-					{
-						roots_hashes.push_back (std::make_pair (block_hash, root));
-					}
+					roots_hashes.emplace_back (block_hash, root);
 				}
 			}
 
@@ -792,14 +792,12 @@ bool badem::frontier_req::operator== (badem::frontier_req const & other_a) const
 }
 
 badem::bulk_pull::bulk_pull () :
-message (badem::message_type::bulk_pull),
-count (0)
+message (badem::message_type::bulk_pull)
 {
 }
 
 badem::bulk_pull::bulk_pull (bool & error_a, badem::stream & stream_a, badem::message_header const & header_a) :
-message (header_a),
-count (0)
+message (header_a)
 {
 	if (!error_a)
 	{

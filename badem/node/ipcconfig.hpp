@@ -8,7 +8,7 @@
 namespace badem
 {
 class jsonconfig;
-
+class tomlconfig;
 namespace ipc
 {
 	/** Base class for transport configurations */
@@ -57,6 +57,8 @@ namespace ipc
 	public:
 		badem::error deserialize_json (bool & upgraded_a, badem::jsonconfig & json_a);
 		badem::error serialize_json (badem::jsonconfig & json) const;
+		badem::error deserialize_toml (badem::tomlconfig & toml_a);
+		badem::error serialize_toml (badem::tomlconfig & toml) const;
 		ipc_config_domain_socket transport_domain;
 		ipc_config_tcp_socket transport_tcp;
 	};

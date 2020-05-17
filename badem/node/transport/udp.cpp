@@ -3,12 +3,12 @@
 #include <badem/node/node.hpp>
 #include <badem/node/transport/udp.hpp>
 
-badem::transport::channel_udp::channel_udp (badem::transport::udp_channels & channels_a, badem::endpoint const & endpoint_a, unsigned network_version_a) :
+badem::transport::channel_udp::channel_udp (badem::transport::udp_channels & channels_a, badem::endpoint const & endpoint_a, uint8_t protocol_version_a) :
 channel (channels_a.node),
 endpoint (endpoint_a),
 channels (channels_a)
 {
-	set_network_version (network_version_a);
+	set_network_version (protocol_version_a);
 	assert (endpoint_a.address ().is_v6 ());
 }
 
@@ -29,16 +29,16 @@ bool badem::transport::channel_udp::operator== (badem::transport::channel const 
 	return result;
 }
 
-void badem::transport::channel_udp::send_buffer (std::shared_ptr<std::vector<uint8_t>> buffer_a, badem::stat::detail detail_a, std::function<void(boost::system::error_code const &, size_t)> const & callback_a)
+void badem::transport::channel_udp::send_buffer (badem::shared_const_buffer const & buffer_a, badem::stat::detail detail_a, std::function<void(boost::system::error_code const &, size_t)> const & callback_a)
 {
 	set_last_packet_sent (std::chrono::steady_clock::now ());
-	channels.send (boost::asio::const_buffer (buffer_a->data (), buffer_a->size ()), endpoint, callback (buffer_a, detail_a, callback_a));
+	channels.send (buffer_a, endpoint, callback (detail_a, callback_a));
 }
 
-std::function<void(boost::system::error_code const &, size_t)> badem::transport::channel_udp::callback (std::shared_ptr<std::vector<uint8_t>> buffer_a, badem::stat::detail detail_a, std::function<void(boost::system::error_code const &, size_t)> const & callback_a) const
+std::function<void(boost::system::error_code const &, size_t)> badem::transport::channel_udp::callback (badem::stat::detail detail_a, std::function<void(boost::system::error_code const &, size_t)> const & callback_a) const
 {
 	// clang-format off
-	return [ buffer_a, node = std::weak_ptr<badem::node> (channels.node.shared ()), callback_a ](boost::system::error_code const & ec, size_t size_a)
+	return [node = std::weak_ptr<badem::node> (channels.node.shared ()), callback_a ](boost::system::error_code const & ec, size_t size_a)
 	{
 		if (auto node_l = node.lock ())
 		{
@@ -48,7 +48,7 @@ std::function<void(boost::system::error_code const &, size_t)> badem::transport:
 			}
 			if (size_a > 0)
 			{
-				node_l->stats.add (badem::stat::type::traffic, badem::stat::dir::out, size_a);
+				node_l->stats.add (badem::stat::type::traffic_udp, badem::stat::dir::out, size_a);
 			}
 
 			if (callback_a)
@@ -80,7 +80,7 @@ socket (node_a.io_ctx, badem::endpoint (boost::asio::ip::address_v6::any (), por
 	local_endpoint = badem::endpoint (boost::asio::ip::address_v6::loopback (), port);
 }
 
-void badem::transport::udp_channels::send (boost::asio::const_buffer buffer_a, badem::endpoint endpoint_a, std::function<void(boost::system::error_code const &, size_t)> const & callback_a)
+void badem::transport::udp_channels::send (badem::shared_const_buffer const & buffer_a, badem::endpoint endpoint_a, std::function<void(boost::system::error_code const &, size_t)> const & callback_a)
 {
 	boost::asio::post (strand,
 	[this, buffer_a, endpoint_a, callback_a]() {
@@ -95,7 +95,7 @@ std::shared_ptr<badem::transport::channel_udp> badem::transport::udp_channels::i
 	std::shared_ptr<badem::transport::channel_udp> result;
 	if (!node.network.not_a_peer (endpoint_a, node.config.allow_local_peers) && (node.network_params.network.is_test_network () || !max_ip_connections (endpoint_a)))
 	{
-		std::unique_lock<std::mutex> lock (mutex);
+		badem::unique_lock<std::mutex> lock (mutex);
 		auto existing (channels.get<endpoint_tag> ().find (endpoint_a));
 		if (existing != channels.get<endpoint_tag> ().end ())
 		{
@@ -114,19 +114,19 @@ std::shared_ptr<badem::transport::channel_udp> badem::transport::udp_channels::i
 
 void badem::transport::udp_channels::erase (badem::endpoint const & endpoint_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	channels.get<endpoint_tag> ().erase (endpoint_a);
 }
 
 size_t badem::transport::udp_channels::size () const
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	return channels.size ();
 }
 
 std::shared_ptr<badem::transport::channel_udp> badem::transport::udp_channels::channel (badem::endpoint const & endpoint_a) const
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	std::shared_ptr<badem::transport::channel_udp> result;
 	auto existing (channels.get<endpoint_tag> ().find (endpoint_a));
 	if (existing != channels.get<endpoint_tag> ().end ())
@@ -140,7 +140,7 @@ std::unordered_set<std::shared_ptr<badem::transport::channel>> badem::transport:
 {
 	std::unordered_set<std::shared_ptr<badem::transport::channel>> result;
 	result.reserve (count_a);
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	// Stop trying to fill result with random samples after this many attempts
 	auto random_cutoff (count_a * 2);
 	auto peers_size (channels.size ());
@@ -179,7 +179,7 @@ bool badem::transport::udp_channels::store_all (bool clear_peers)
 	// we collect endpoints to be saved and then relase the lock.
 	std::vector<badem::endpoint> endpoints;
 	{
-		std::lock_guard<std::mutex> lock (mutex);
+		badem::lock_guard<std::mutex> lock (mutex);
 		endpoints.reserve (channels.size ());
 		std::transform (channels.begin (), channels.end (),
 		std::back_inserter (endpoints), [](const auto & channel) { return channel.endpoint (); });
@@ -188,7 +188,7 @@ bool badem::transport::udp_channels::store_all (bool clear_peers)
 	if (!endpoints.empty ())
 	{
 		// Clear all peers then refresh with the current list of peers
-		auto transaction (node.store.tx_begin_write ());
+		auto transaction (node.store.tx_begin_write ({ tables::peers }));
 		if (clear_peers)
 		{
 			node.store.peer_clear (transaction);
@@ -206,7 +206,7 @@ bool badem::transport::udp_channels::store_all (bool clear_peers)
 std::shared_ptr<badem::transport::channel_udp> badem::transport::udp_channels::find_node_id (badem::account const & node_id_a)
 {
 	std::shared_ptr<badem::transport::channel_udp> result;
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	auto existing (channels.get<node_id_tag> ().find (node_id_a));
 	if (existing != channels.get<node_id_tag> ().end ())
 	{
@@ -217,13 +217,13 @@ std::shared_ptr<badem::transport::channel_udp> badem::transport::udp_channels::f
 
 void badem::transport::udp_channels::clean_node_id (badem::account const & node_id_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	channels.get<node_id_tag> ().erase (node_id_a);
 }
 
 void badem::transport::udp_channels::clean_node_id (badem::endpoint const & endpoint_a, badem::account const & node_id_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	auto existing (channels.get<node_id_tag> ().equal_range (node_id_a));
 	for (auto & record : boost::make_iterator_range (existing))
 	{
@@ -239,7 +239,7 @@ void badem::transport::udp_channels::clean_node_id (badem::endpoint const & endp
 badem::tcp_endpoint badem::transport::udp_channels::bootstrap_peer (uint8_t connection_protocol_version_min)
 {
 	badem::tcp_endpoint result (boost::asio::ip::address_v6::any (), 0);
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	for (auto i (channels.get<last_bootstrap_attempt_tag> ().begin ()), n (channels.get<last_bootstrap_attempt_tag> ().end ()); i != n;)
 	{
 		if (i->channel->get_network_version () >= connection_protocol_version_min)
@@ -309,7 +309,7 @@ void badem::transport::udp_channels::stop ()
 {
 	// Stop and invalidate local endpoint
 	stopped = true;
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	local_endpoint = badem::endpoint (boost::asio::ip::address_v6::loopback (), 0);
 
 	// On test-net, close directly to avoid address-reuse issues. On livenet, close
@@ -337,7 +337,7 @@ void badem::transport::udp_channels::close_socket ()
 
 badem::endpoint badem::transport::udp_channels::get_local_endpoint () const
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	return local_endpoint;
 }
 
@@ -368,7 +368,7 @@ public:
 				else if (!node.network.tcp_channels.find_channel (badem::transport::map_endpoint_to_tcp (endpoint)))
 				{
 					// Don't start connection if TCP channel to same IP:port exists
-					find_channel = std::make_shared<badem::transport::channel_udp> (node.network.udp_channels, endpoint);
+					find_channel = std::make_shared<badem::transport::channel_udp> (node.network.udp_channels, endpoint, node.network_params.protocol.protocol_version);
 					node.network.send_node_id_handshake (find_channel, *cookie, boost::none);
 				}
 			}
@@ -455,7 +455,7 @@ public:
 			auto find_channel (node.network.udp_channels.channel (endpoint));
 			if (!find_channel)
 			{
-				find_channel = std::make_shared<badem::transport::channel_udp> (node.network.udp_channels, endpoint);
+				find_channel = std::make_shared<badem::transport::channel_udp> (node.network.udp_channels, endpoint, node.network_params.protocol.protocol_version);
 			}
 			node.network.send_node_id_handshake (find_channel, out_query, out_respond_to);
 		}
@@ -544,7 +544,7 @@ void badem::transport::udp_channels::receive_action (badem::message_buffer * dat
 		}
 		else
 		{
-			node.stats.add (badem::stat::type::traffic, badem::stat::dir::in, data_a->size);
+			node.stats.add (badem::stat::type::traffic_udp, badem::stat::dir::in, data_a->size);
 		}
 	}
 	else
@@ -574,12 +574,12 @@ void badem::transport::udp_channels::process_packets ()
 
 std::shared_ptr<badem::transport::channel> badem::transport::udp_channels::create (badem::endpoint const & endpoint_a)
 {
-	return std::make_shared<badem::transport::channel_udp> (*this, endpoint_a);
+	return std::make_shared<badem::transport::channel_udp> (*this, endpoint_a, node.network_params.protocol.protocol_version);
 }
 
 bool badem::transport::udp_channels::max_ip_connections (badem::endpoint const & endpoint_a)
 {
-	std::unique_lock<std::mutex> lock (mutex);
+	badem::unique_lock<std::mutex> lock (mutex);
 	bool result (channels.get<ip_address_tag> ().count (endpoint_a.address ()) >= badem::transport::max_peers_per_ip);
 	return result;
 }
@@ -593,7 +593,7 @@ bool badem::transport::udp_channels::reachout (badem::endpoint const & endpoint_
 		auto endpoint_l (badem::transport::map_endpoint_to_v6 (endpoint_a));
 		// Don't keepalive to nodes that already sent us something
 		error |= channel (endpoint_l) != nullptr;
-		std::lock_guard<std::mutex> lock (mutex);
+		badem::lock_guard<std::mutex> lock (mutex);
 		auto existing (attempts.find (endpoint_l));
 		error |= existing != attempts.end ();
 		attempts.insert ({ endpoint_l, std::chrono::steady_clock::now () });
@@ -606,7 +606,7 @@ std::unique_ptr<badem::seq_con_info_component> badem::transport::udp_channels::c
 	size_t channels_count = 0;
 	size_t attemps_count = 0;
 	{
-		std::lock_guard<std::mutex> guard (mutex);
+		badem::lock_guard<std::mutex> guard (mutex);
 		channels_count = channels.size ();
 		attemps_count = attempts.size ();
 	}
@@ -620,7 +620,7 @@ std::unique_ptr<badem::seq_con_info_component> badem::transport::udp_channels::c
 
 void badem::transport::udp_channels::purge (std::chrono::steady_clock::time_point const & cutoff_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	auto disconnect_cutoff (channels.get<last_packet_received_tag> ().lower_bound (cutoff_a));
 	channels.get<last_packet_received_tag> ().erase (channels.get<last_packet_received_tag> ().begin (), disconnect_cutoff);
 	// Remove keepalive attempt tracking for attempts older than cutoff
@@ -633,7 +633,7 @@ void badem::transport::udp_channels::ongoing_keepalive ()
 	badem::keepalive message;
 	node.network.random_fill (message.peers);
 	std::vector<std::shared_ptr<badem::transport::channel_udp>> send_list;
-	std::unique_lock<std::mutex> lock (mutex);
+	badem::unique_lock<std::mutex> lock (mutex);
 	auto keepalive_cutoff (channels.get<last_packet_received_tag> ().lower_bound (std::chrono::steady_clock::now () - node.network_params.node.period));
 	for (auto i (channels.get<last_packet_received_tag> ().begin ()); i != keepalive_cutoff; ++i)
 	{
@@ -655,7 +655,7 @@ void badem::transport::udp_channels::ongoing_keepalive ()
 
 void badem::transport::udp_channels::list (std::deque<std::shared_ptr<badem::transport::channel>> & deque_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	for (auto i (channels.begin ()), j (channels.end ()); i != j; ++i)
 	{
 		deque_a.push_back (i->channel);
@@ -664,7 +664,7 @@ void badem::transport::udp_channels::list (std::deque<std::shared_ptr<badem::tra
 
 void badem::transport::udp_channels::modify (std::shared_ptr<badem::transport::channel_udp> channel_a, std::function<void(std::shared_ptr<badem::transport::channel_udp>)> modify_callback_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	auto existing (channels.get<endpoint_tag> ().find (channel_a->endpoint));
 	if (existing != channels.get<endpoint_tag> ().end ())
 	{

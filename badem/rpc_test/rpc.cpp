@@ -123,11 +123,36 @@ void check_block_response_count (badem::system & system, badem::rpc & rpc, boost
 	ASSERT_EQ (200, response.status);
 	ASSERT_EQ (size_count, response.json.get_child ("blocks").front ().second.size ());
 }
+
+class scoped_io_thread_name_change
+{
+public:
+	scoped_io_thread_name_change ()
+	{
+		renew ();
+	}
+
+	~scoped_io_thread_name_change ()
+	{
+		reset ();
+	}
+
+	void reset ()
+	{
+		badem::thread_role::set (badem::thread_role::name::unknown);
+	}
+
+	void renew ()
+	{
+		badem::thread_role::set (badem::thread_role::name::io);
+	}
+};
 }
 
 TEST (rpc, account_balance)
 {
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -155,6 +180,7 @@ TEST (rpc, account_balance)
 TEST (rpc, account_block_count)
 {
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -180,6 +206,7 @@ TEST (rpc, account_block_count)
 TEST (rpc, account_create)
 {
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -199,7 +226,7 @@ TEST (rpc, account_create)
 	}
 	ASSERT_EQ (200, response0.status);
 	auto account_text0 (response0.json.get<std::string> ("account"));
-	badem::uint256_union account0;
+	badem::account account0;
 	ASSERT_FALSE (account0.decode_account (account_text0));
 	ASSERT_TRUE (system.wallet (0)->exists (account0));
 	uint64_t max_index (std::numeric_limits<uint32_t>::max ());
@@ -212,7 +239,7 @@ TEST (rpc, account_create)
 	}
 	ASSERT_EQ (200, response1.status);
 	auto account_text1 (response1.json.get<std::string> ("account"));
-	badem::uint256_union account1;
+	badem::account account1;
 	ASSERT_FALSE (account1.decode_account (account_text1));
 	ASSERT_TRUE (system.wallet (0)->exists (account1));
 	request.put ("index", max_index + 1);
@@ -232,8 +259,9 @@ TEST (rpc, account_weight)
 	badem::system system (24000, 1);
 	badem::block_hash latest (system.nodes[0]->latest (badem::test_genesis_key.pub));
 	auto & node1 (*system.nodes[0]);
-	badem::change_block block (latest, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (latest));
+	badem::change_block block (latest, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (latest));
 	ASSERT_EQ (badem::process_result::progress, node1.process (block).code);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -258,6 +286,8 @@ TEST (rpc, account_weight)
 TEST (rpc, wallet_contains)
 {
 	badem::system system (24000, 1);
+	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -266,7 +296,6 @@ TEST (rpc, wallet_contains)
 	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
 	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
 	rpc.start ();
-	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	boost::property_tree::ptree request;
 	std::string wallet;
 	node->wallets.items.begin ()->first.encode_hex (wallet);
@@ -287,6 +316,7 @@ TEST (rpc, wallet_contains)
 TEST (rpc, wallet_doesnt_contain)
 {
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -315,6 +345,8 @@ TEST (rpc, wallet_doesnt_contain)
 TEST (rpc, validate_account_number)
 {
 	badem::system system (24000, 1);
+	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -323,7 +355,6 @@ TEST (rpc, validate_account_number)
 	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
 	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
 	rpc.start ();
-	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	boost::property_tree::ptree request;
 	request.put ("action", "validate_account_number");
 	request.put ("account", badem::test_genesis_key.pub.to_account ());
@@ -340,6 +371,8 @@ TEST (rpc, validate_account_number)
 TEST (rpc, validate_account_invalid)
 {
 	badem::system system (24000, 1);
+	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -351,7 +384,6 @@ TEST (rpc, validate_account_invalid)
 	std::string account;
 	badem::test_genesis_key.pub.encode_account (account);
 	account[0] ^= 0x1;
-	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	boost::property_tree::ptree request;
 	request.put ("action", "validate_account_number");
 	request.put ("account", account);
@@ -369,6 +401,8 @@ TEST (rpc, validate_account_invalid)
 TEST (rpc, send)
 {
 	badem::system system (24000, 1);
+	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -377,7 +411,6 @@ TEST (rpc, send)
 	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
 	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
 	rpc.start ();
-	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	boost::property_tree::ptree request;
 	std::string wallet;
 	system.nodes[0]->wallets.items.begin ()->first.encode_hex (wallet);
@@ -410,6 +443,7 @@ TEST (rpc, send)
 TEST (rpc, send_fail)
 {
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -447,6 +481,8 @@ TEST (rpc, send_fail)
 TEST (rpc, send_work)
 {
 	badem::system system (24000, 1);
+	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -455,7 +491,6 @@ TEST (rpc, send_work)
 	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
 	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
 	rpc.start ();
-	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	boost::property_tree::ptree request;
 	std::string wallet;
 	system.nodes[0]->wallets.items.begin ()->first.encode_hex (wallet);
@@ -473,7 +508,7 @@ TEST (rpc, send_work)
 	}
 	ASSERT_EQ (std::error_code (badem::error_common::invalid_work).message (), response.json.get<std::string> ("error"));
 	request.erase ("work");
-	request.put ("work", badem::to_string_hex (system.nodes[0]->work_generate_blocking (system.nodes[0]->latest (badem::test_genesis_key.pub))));
+	request.put ("work", badem::to_string_hex (*system.nodes[0]->work_generate_blocking (system.nodes[0]->latest (badem::test_genesis_key.pub))));
 	test_response response2 (request, rpc.config.port, system.io_ctx);
 	system.deadline_set (10s);
 	while (response2.status == 0)
@@ -488,9 +523,46 @@ TEST (rpc, send_work)
 	ASSERT_EQ (system.nodes[0]->latest (badem::test_genesis_key.pub), block);
 }
 
+TEST (rpc, send_work_disabled)
+{
+	badem::system system (24000, 0);
+	badem::node_config node_config (24000, system.logging);
+	node_config.work_threads = 0;
+	auto & node = *system.add_node (node_config);
+	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
+	enable_ipc_transport_tcp (node.config.ipc_config.transport_tcp);
+	badem::node_rpc_config node_rpc_config;
+	badem::ipc::ipc_server ipc_server (node, node_rpc_config);
+	badem::rpc_config rpc_config (true);
+	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
+	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
+	rpc.start ();
+	boost::property_tree::ptree request;
+	std::string wallet;
+	system.nodes[0]->wallets.items.begin ()->first.encode_hex (wallet);
+	request.put ("wallet", wallet);
+	request.put ("action", "send");
+	request.put ("source", badem::test_genesis_key.pub.to_account ());
+	request.put ("destination", badem::test_genesis_key.pub.to_account ());
+	request.put ("amount", "100");
+	{
+		test_response response (request, rpc.config.port, system.io_ctx);
+		system.deadline_set (10s);
+		while (response.status == 0)
+		{
+			ASSERT_NO_ERROR (system.poll ());
+		}
+		ASSERT_EQ (200, response.status);
+		ASSERT_EQ (std::error_code (badem::error_common::disabled_work_generation).message (), response.json.get<std::string> ("error"));
+	}
+}
+
 TEST (rpc, send_idempotent)
 {
 	badem::system system (24000, 1);
+	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -499,7 +571,6 @@ TEST (rpc, send_idempotent)
 	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
 	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
 	rpc.start ();
-	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	boost::property_tree::ptree request;
 	std::string wallet;
 	system.nodes[0]->wallets.items.begin ()->first.encode_hex (wallet);
@@ -546,6 +617,7 @@ TEST (rpc, send_idempotent)
 TEST (rpc, stop)
 {
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -567,6 +639,7 @@ TEST (rpc, stop)
 TEST (rpc, wallet_add)
 {
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -599,6 +672,7 @@ TEST (rpc, wallet_add)
 TEST (rpc, wallet_password_valid)
 {
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -626,6 +700,7 @@ TEST (rpc, wallet_password_valid)
 TEST (rpc, wallet_password_change)
 {
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -649,6 +724,7 @@ TEST (rpc, wallet_password_change)
 	ASSERT_EQ (200, response.status);
 	std::string account_text1 (response.json.get<std::string> ("changed"));
 	ASSERT_EQ (account_text1, "1");
+	scoped_thread_name_io.reset ();
 	auto transaction (system.wallet (0)->wallets.tx_begin_write ());
 	ASSERT_TRUE (system.wallet (0)->store.valid_password (transaction));
 	ASSERT_TRUE (system.wallet (0)->enter_password (transaction, ""));
@@ -660,6 +736,7 @@ TEST (rpc, wallet_password_change)
 TEST (rpc, wallet_password_enter)
 {
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	badem::raw_key password_l;
 	password_l.data.clear ();
 	system.deadline_set (10s);
@@ -696,6 +773,7 @@ TEST (rpc, wallet_password_enter)
 TEST (rpc, wallet_representative)
 {
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -723,6 +801,7 @@ TEST (rpc, wallet_representative)
 TEST (rpc, wallet_representative_set)
 {
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -752,6 +831,8 @@ TEST (rpc, wallet_representative_set)
 TEST (rpc, wallet_representative_set_force)
 {
 	badem::system system (24000, 1);
+	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -759,7 +840,6 @@ TEST (rpc, wallet_representative_set_force)
 	badem::rpc_config rpc_config (true);
 	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
 	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
-	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	rpc.start ();
 	boost::property_tree::ptree request;
 	std::string wallet;
@@ -787,9 +867,7 @@ TEST (rpc, wallet_representative_set_force)
 		badem::account_info info;
 		if (!system.nodes[0]->store.account_get (transaction, badem::test_genesis_key.pub, info))
 		{
-			auto block (system.nodes[0]->store.block_get (transaction, info.rep_block));
-			assert (block != nullptr);
-			representative = block->representative ();
+			representative = info.representative;
 		}
 		ASSERT_NO_ERROR (system.poll ());
 	}
@@ -798,6 +876,10 @@ TEST (rpc, wallet_representative_set_force)
 TEST (rpc, account_list)
 {
 	badem::system system (24000, 1);
+	badem::keypair key2;
+	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+	system.wallet (0)->insert_adhoc (key2.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -806,9 +888,6 @@ TEST (rpc, account_list)
 	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
 	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
 	rpc.start ();
-	badem::keypair key2;
-	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
-	system.wallet (0)->insert_adhoc (key2.prv);
 	boost::property_tree::ptree request;
 	std::string wallet;
 	system.nodes[0]->wallets.items.begin ()->first.encode_hex (wallet);
@@ -822,11 +901,11 @@ TEST (rpc, account_list)
 	}
 	ASSERT_EQ (200, response.status);
 	auto & accounts_node (response.json.get_child ("accounts"));
-	std::vector<badem::uint256_union> accounts;
+	std::vector<badem::account> accounts;
 	for (auto i (accounts_node.begin ()), j (accounts_node.end ()); i != j; ++i)
 	{
 		auto account (i->second.get<std::string> (""));
-		badem::uint256_union number;
+		badem::account number;
 		ASSERT_FALSE (number.decode_account (account));
 		accounts.push_back (number);
 	}
@@ -840,6 +919,8 @@ TEST (rpc, account_list)
 TEST (rpc, wallet_key_valid)
 {
 	badem::system system (24000, 1);
+	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -848,7 +929,6 @@ TEST (rpc, wallet_key_valid)
 	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
 	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
 	rpc.start ();
-	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	boost::property_tree::ptree request;
 	std::string wallet;
 	system.nodes[0]->wallets.items.begin ()->first.encode_hex (wallet);
@@ -868,6 +948,7 @@ TEST (rpc, wallet_key_valid)
 TEST (rpc, wallet_create)
 {
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -886,7 +967,7 @@ TEST (rpc, wallet_create)
 	}
 	ASSERT_EQ (200, response.status);
 	std::string wallet_text (response.json.get<std::string> ("wallet"));
-	badem::uint256_union wallet_id;
+	badem::wallet_id wallet_id;
 	ASSERT_FALSE (wallet_id.decode_hex (wallet_text));
 	ASSERT_NE (system.nodes[0]->wallets.items.end (), system.nodes[0]->wallets.items.find (wallet_id));
 }
@@ -894,10 +975,11 @@ TEST (rpc, wallet_create)
 TEST (rpc, wallet_create_seed)
 {
 	badem::system system (24000, 1);
-	badem::keypair seed;
-	badem::raw_key prv;
-	badem::deterministic_key (seed.pub, 0, prv.data);
-	auto pub (badem::pub_key (prv.data));
+	scoped_io_thread_name_change scoped_thread_name_io;
+	badem::raw_key seed;
+	badem::random_pool::generate_block (seed.data.bytes.data (), seed.data.bytes.size ());
+	auto prv = badem::deterministic_key (seed, 0);
+	auto pub (badem::pub_key (prv));
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -908,7 +990,7 @@ TEST (rpc, wallet_create_seed)
 	rpc.start ();
 	boost::property_tree::ptree request;
 	request.put ("action", "wallet_create");
-	request.put ("seed", seed.pub.to_string ());
+	request.put ("seed", seed.data.to_string ());
 	test_response response (request, rpc.config.port, system.io_ctx);
 	while (response.status == 0)
 	{
@@ -916,7 +998,7 @@ TEST (rpc, wallet_create_seed)
 	}
 	ASSERT_EQ (200, response.status);
 	std::string wallet_text (response.json.get<std::string> ("wallet"));
-	badem::uint256_union wallet_id;
+	badem::wallet_id wallet_id;
 	ASSERT_FALSE (wallet_id.decode_hex (wallet_text));
 	auto existing (system.nodes[0]->wallets.items.find (wallet_id));
 	ASSERT_NE (system.nodes[0]->wallets.items.end (), existing);
@@ -924,10 +1006,10 @@ TEST (rpc, wallet_create_seed)
 		auto transaction (system.nodes[0]->wallets.tx_begin_read ());
 		badem::raw_key seed0;
 		existing->second->store.seed (seed0, transaction);
-		ASSERT_EQ (seed.pub, seed0.data);
+		ASSERT_EQ (seed, seed0);
 	}
 	auto account_text (response.json.get<std::string> ("last_restored_account"));
-	badem::uint256_union account;
+	badem::account account;
 	ASSERT_FALSE (account.decode_account (account_text));
 	ASSERT_TRUE (existing->second->exists (account));
 	ASSERT_EQ (pub, account);
@@ -937,6 +1019,8 @@ TEST (rpc, wallet_create_seed)
 TEST (rpc, wallet_export)
 {
 	badem::system system (24000, 1);
+	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -945,7 +1029,6 @@ TEST (rpc, wallet_export)
 	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
 	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
 	rpc.start ();
-	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	boost::property_tree::ptree request;
 	request.put ("action", "wallet_export");
 	request.put ("wallet", system.nodes[0]->wallets.items.begin ()->first.to_string ());
@@ -958,6 +1041,7 @@ TEST (rpc, wallet_export)
 	ASSERT_EQ (200, response.status);
 	std::string wallet_json (response.json.get<std::string> ("json"));
 	bool error (false);
+	scoped_thread_name_io.reset ();
 	auto transaction (system.nodes[0]->wallets.tx_begin_write ());
 	badem::kdf kdf;
 	badem::wallet_store store (error, kdf, transaction, badem::genesis_account, 1, "0", wallet_json);
@@ -968,6 +1052,8 @@ TEST (rpc, wallet_export)
 TEST (rpc, wallet_destroy)
 {
 	badem::system system (24000, 1);
+	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto wallet_id (system.nodes[0]->wallets.items.begin ()->first);
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
@@ -977,7 +1063,6 @@ TEST (rpc, wallet_destroy)
 	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
 	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
 	rpc.start ();
-	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	boost::property_tree::ptree request;
 	request.put ("action", "wallet_destroy");
 	request.put ("wallet", wallet_id.to_string ());
@@ -995,6 +1080,13 @@ TEST (rpc, account_move)
 {
 	badem::system system (24000, 1);
 	auto wallet_id (system.nodes[0]->wallets.items.begin ()->first);
+	auto destination (system.wallet (0));
+	destination->insert_adhoc (badem::test_genesis_key.prv);
+	badem::keypair key;
+	auto source_id = badem::random_wallet_id ();
+	auto source (system.nodes[0]->wallets.create (source_id));
+	source->insert_adhoc (key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -1003,16 +1095,10 @@ TEST (rpc, account_move)
 	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
 	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
 	rpc.start ();
-	auto destination (system.wallet (0));
-	badem::keypair key;
-	destination->insert_adhoc (badem::test_genesis_key.prv);
-	badem::keypair source_id;
-	auto source (system.nodes[0]->wallets.create (source_id.pub));
-	source->insert_adhoc (key.prv);
 	boost::property_tree::ptree request;
 	request.put ("action", "account_move");
 	request.put ("wallet", wallet_id.to_string ());
-	request.put ("source", source_id.pub.to_string ());
+	request.put ("source", source_id.to_string ());
 	boost::property_tree::ptree keys;
 	boost::property_tree::ptree entry;
 	entry.put ("", key.pub.to_account ());
@@ -1035,6 +1121,7 @@ TEST (rpc, account_move)
 TEST (rpc, block)
 {
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -1061,6 +1148,7 @@ TEST (rpc, block)
 TEST (rpc, block_account)
 {
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -1095,6 +1183,7 @@ TEST (rpc, chain)
 	auto block (system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, 1));
 	ASSERT_NE (nullptr, block);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -1134,6 +1223,7 @@ TEST (rpc, chain_limit)
 	auto block (system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, 1));
 	ASSERT_NE (nullptr, block);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -1172,6 +1262,7 @@ TEST (rpc, chain_offset)
 	auto block (system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, 1));
 	ASSERT_NE (nullptr, block);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -1210,11 +1301,14 @@ TEST (rpc, frontier)
 		for (auto i (0); i < 1000; ++i)
 		{
 			badem::keypair key;
-			source[key.pub] = key.prv.data;
+			badem::block_hash hash;
+			badem::random_pool::generate_block (hash.bytes.data (), hash.bytes.size ());
+			source[key.pub] = hash;
 			system.nodes[0]->store.confirmation_height_put (transaction, key.pub, 0);
-			system.nodes[0]->store.account_put (transaction, key.pub, badem::account_info (key.prv.data, 0, 0, 0, 0, 0, badem::epoch::epoch_0));
+			system.nodes[0]->store.account_put (transaction, key.pub, badem::account_info (hash, 0, 0, 0, 0, 0, badem::epoch::epoch_0));
 		}
 	}
+	scoped_io_thread_name_change scoped_thread_name_io;
 	badem::keypair key;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
@@ -1258,11 +1352,15 @@ TEST (rpc, frontier_limited)
 		for (auto i (0); i < 1000; ++i)
 		{
 			badem::keypair key;
-			source[key.pub] = key.prv.data;
+			badem::block_hash hash;
+			badem::random_pool::generate_block (hash.bytes.data (), hash.bytes.size ());
+			source[key.pub] = hash;
 			system.nodes[0]->store.confirmation_height_put (transaction, key.pub, 0);
-			system.nodes[0]->store.account_put (transaction, key.pub, badem::account_info (key.prv.data, 0, 0, 0, 0, 0, badem::epoch::epoch_0));
+			system.nodes[0]->store.account_put (transaction, key.pub, badem::account_info (hash, 0, 0, 0, 0, 0, badem::epoch::epoch_0));
 		}
 	}
+
+	scoped_io_thread_name_change scoped_thread_name_io;
 	badem::keypair key;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
@@ -1296,11 +1394,14 @@ TEST (rpc, frontier_startpoint)
 		for (auto i (0); i < 1000; ++i)
 		{
 			badem::keypair key;
-			source[key.pub] = key.prv.data;
+			badem::block_hash hash;
+			badem::random_pool::generate_block (hash.bytes.data (), hash.bytes.size ());
+			source[key.pub] = hash;
 			system.nodes[0]->store.confirmation_height_put (transaction, key.pub, 0);
-			system.nodes[0]->store.account_put (transaction, key.pub, badem::account_info (key.prv.data, 0, 0, 0, 0, 0, badem::epoch::epoch_0));
+			system.nodes[0]->store.account_put (transaction, key.pub, badem::account_info (hash, 0, 0, 0, 0, 0, badem::epoch::epoch_0));
 		}
 	}
+	scoped_io_thread_name_change scoped_thread_name_io;
 	badem::keypair key;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
@@ -1338,15 +1439,16 @@ TEST (rpc, history)
 	ASSERT_NE (nullptr, receive);
 	auto node0 (system.nodes[0]);
 	badem::genesis genesis;
-	badem::state_block usend (badem::genesis_account, node0->latest (badem::genesis_account), badem::genesis_account, badem::genesis_amount - badem::kBDM_ratio, badem::genesis_account, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.nodes[0]->work_generate_blocking (node0->latest (badem::genesis_account)));
-	badem::state_block ureceive (badem::genesis_account, usend.hash (), badem::genesis_account, badem::genesis_amount, usend.hash (), badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.nodes[0]->work_generate_blocking (usend.hash ()));
-	badem::state_block uchange (badem::genesis_account, ureceive.hash (), badem::keypair ().pub, badem::genesis_amount, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.nodes[0]->work_generate_blocking (ureceive.hash ()));
+	badem::state_block usend (badem::genesis_account, node0->latest (badem::genesis_account), badem::genesis_account, badem::genesis_amount - badem::Gbdm_ratio, badem::genesis_account, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.nodes[0]->work_generate_blocking (node0->latest (badem::genesis_account)));
+	badem::state_block ureceive (badem::genesis_account, usend.hash (), badem::genesis_account, badem::genesis_amount, usend.hash (), badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.nodes[0]->work_generate_blocking (usend.hash ()));
+	badem::state_block uchange (badem::genesis_account, ureceive.hash (), badem::keypair ().pub, badem::genesis_amount, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.nodes[0]->work_generate_blocking (ureceive.hash ()));
 	{
 		auto transaction (node0->store.tx_begin_write ());
 		ASSERT_EQ (badem::process_result::progress, node0->ledger.process (transaction, usend).code);
 		ASSERT_EQ (badem::process_result::progress, node0->ledger.process (transaction, ureceive).code);
 		ASSERT_EQ (badem::process_result::progress, node0->ledger.process (transaction, uchange).code);
 	}
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node0->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node0, node_rpc_config);
@@ -1375,12 +1477,12 @@ TEST (rpc, history)
 	ASSERT_EQ ("receive", std::get<0> (history_l[0]));
 	ASSERT_EQ (ureceive.hash ().to_string (), std::get<3> (history_l[0]));
 	ASSERT_EQ (badem::test_genesis_key.pub.to_account (), std::get<1> (history_l[0]));
-	ASSERT_EQ (badem::kBDM_ratio.convert_to<std::string> (), std::get<2> (history_l[0]));
+	ASSERT_EQ (badem::Gbdm_ratio.convert_to<std::string> (), std::get<2> (history_l[0]));
 	ASSERT_EQ (5, history_l.size ());
 	ASSERT_EQ ("send", std::get<0> (history_l[1]));
 	ASSERT_EQ (usend.hash ().to_string (), std::get<3> (history_l[1]));
 	ASSERT_EQ (badem::test_genesis_key.pub.to_account (), std::get<1> (history_l[1]));
-	ASSERT_EQ (badem::kBDM_ratio.convert_to<std::string> (), std::get<2> (history_l[1]));
+	ASSERT_EQ (badem::Gbdm_ratio.convert_to<std::string> (), std::get<2> (history_l[1]));
 	ASSERT_EQ ("receive", std::get<0> (history_l[2]));
 	ASSERT_EQ (badem::test_genesis_key.pub.to_account (), std::get<1> (history_l[2]));
 	ASSERT_EQ (system.nodes[0]->config.receive_minimum.to_string_dec (), std::get<2> (history_l[2]));
@@ -1407,15 +1509,16 @@ TEST (rpc, account_history)
 	ASSERT_NE (nullptr, receive);
 	auto node0 (system.nodes[0]);
 	badem::genesis genesis;
-	badem::state_block usend (badem::genesis_account, node0->latest (badem::genesis_account), badem::genesis_account, badem::genesis_amount - badem::kBDM_ratio, badem::genesis_account, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.nodes[0]->work_generate_blocking (node0->latest (badem::genesis_account)));
-	badem::state_block ureceive (badem::genesis_account, usend.hash (), badem::genesis_account, badem::genesis_amount, usend.hash (), badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.nodes[0]->work_generate_blocking (usend.hash ()));
-	badem::state_block uchange (badem::genesis_account, ureceive.hash (), badem::keypair ().pub, badem::genesis_amount, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.nodes[0]->work_generate_blocking (ureceive.hash ()));
+	badem::state_block usend (badem::genesis_account, node0->latest (badem::genesis_account), badem::genesis_account, badem::genesis_amount - badem::Gbdm_ratio, badem::genesis_account, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.nodes[0]->work_generate_blocking (node0->latest (badem::genesis_account)));
+	badem::state_block ureceive (badem::genesis_account, usend.hash (), badem::genesis_account, badem::genesis_amount, usend.hash (), badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.nodes[0]->work_generate_blocking (usend.hash ()));
+	badem::state_block uchange (badem::genesis_account, ureceive.hash (), badem::keypair ().pub, badem::genesis_amount, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.nodes[0]->work_generate_blocking (ureceive.hash ()));
 	{
 		auto transaction (node0->store.tx_begin_write ());
 		ASSERT_EQ (badem::process_result::progress, node0->ledger.process (transaction, usend).code);
 		ASSERT_EQ (badem::process_result::progress, node0->ledger.process (transaction, ureceive).code);
 		ASSERT_EQ (badem::process_result::progress, node0->ledger.process (transaction, uchange).code);
 	}
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node0->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node0, node_rpc_config);
@@ -1445,12 +1548,12 @@ TEST (rpc, account_history)
 		ASSERT_EQ ("receive", std::get<0> (history_l[0]));
 		ASSERT_EQ (ureceive.hash ().to_string (), std::get<3> (history_l[0]));
 		ASSERT_EQ (badem::test_genesis_key.pub.to_account (), std::get<1> (history_l[0]));
-		ASSERT_EQ (badem::kBDM_ratio.convert_to<std::string> (), std::get<2> (history_l[0]));
+		ASSERT_EQ (badem::Gbdm_ratio.convert_to<std::string> (), std::get<2> (history_l[0]));
 		ASSERT_EQ ("6", std::get<4> (history_l[0])); // change block (height 7) is skipped by account_history since "raw" is not set
 		ASSERT_EQ ("send", std::get<0> (history_l[1]));
 		ASSERT_EQ (usend.hash ().to_string (), std::get<3> (history_l[1]));
 		ASSERT_EQ (badem::test_genesis_key.pub.to_account (), std::get<1> (history_l[1]));
-		ASSERT_EQ (badem::kBDM_ratio.convert_to<std::string> (), std::get<2> (history_l[1]));
+		ASSERT_EQ (badem::Gbdm_ratio.convert_to<std::string> (), std::get<2> (history_l[1]));
 		ASSERT_EQ ("5", std::get<4> (history_l[1]));
 		ASSERT_EQ ("receive", std::get<0> (history_l[2]));
 		ASSERT_EQ (badem::test_genesis_key.pub.to_account (), std::get<1> (history_l[2]));
@@ -1488,10 +1591,13 @@ TEST (rpc, account_history)
 	}
 
 	// Test filtering
+	scoped_thread_name_io.reset ();
 	auto account2 (system.wallet (0)->deterministic_insert ());
 	auto send2 (system.wallet (0)->send_action (badem::test_genesis_key.pub, account2, system.nodes[0]->config.receive_minimum.number ()));
 	ASSERT_NE (nullptr, send2);
 	auto receive2 (system.wallet (0)->receive_action (*send2, account2, system.nodes[0]->config.receive_minimum.number ()));
+	scoped_thread_name_io.renew ();
+	// Test filter for send state blocks
 	ASSERT_NE (nullptr, receive2);
 	{
 		boost::property_tree::ptree request;
@@ -1499,6 +1605,25 @@ TEST (rpc, account_history)
 		request.put ("account", badem::test_genesis_key.pub.to_account ());
 		boost::property_tree::ptree other_account;
 		other_account.put ("", account2.to_account ());
+		boost::property_tree::ptree filtered_accounts;
+		filtered_accounts.push_back (std::make_pair ("", other_account));
+		request.add_child ("account_filter", filtered_accounts);
+		request.put ("count", 100);
+		test_response response (request, rpc.config.port, system.io_ctx);
+		while (response.status == 0)
+		{
+			ASSERT_NO_ERROR (system.poll ());
+		}
+		auto history_node (response.json.get_child ("history"));
+		ASSERT_EQ (history_node.size (), 2);
+	}
+	// Test filter for receive state blocks
+	{
+		boost::property_tree::ptree request;
+		request.put ("action", "account_history");
+		request.put ("account", account2.to_account ());
+		boost::property_tree::ptree other_account;
+		other_account.put ("", badem::test_genesis_key.pub.to_account ());
 		boost::property_tree::ptree filtered_accounts;
 		filtered_accounts.push_back (std::make_pair ("", other_account));
 		request.add_child ("account_filter", filtered_accounts);
@@ -1523,6 +1648,7 @@ TEST (rpc, history_count)
 	ASSERT_NE (nullptr, send);
 	auto receive (system.wallet (0)->receive_action (*send, badem::test_genesis_key.pub, system.nodes[0]->config.receive_minimum.number ()));
 	ASSERT_NE (nullptr, receive);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -1549,10 +1675,11 @@ TEST (rpc, history_count)
 TEST (rpc, process_block)
 {
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	badem::keypair key;
 	auto latest (system.nodes[0]->latest (badem::test_genesis_key.pub));
 	auto & node1 (*system.nodes[0]);
-	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (latest));
+	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (latest));
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -1565,20 +1692,84 @@ TEST (rpc, process_block)
 	std::string json;
 	send.serialize_json (json);
 	request.put ("block", json);
-	test_response response (request, rpc.config.port, system.io_ctx);
-	system.deadline_set (5s);
-	while (response.status == 0)
 	{
-		ASSERT_NO_ERROR (system.poll ());
+		test_response response (request, rpc.config.port, system.io_ctx);
+		system.deadline_set (5s);
+		while (response.status == 0)
+		{
+			ASSERT_NO_ERROR (system.poll ());
+		}
+		ASSERT_EQ (200, response.status);
+		system.deadline_set (10s);
+		while (system.nodes[0]->latest (badem::test_genesis_key.pub) != send.hash ())
+		{
+			ASSERT_NO_ERROR (system.poll ());
+		}
+		std::string send_hash (response.json.get<std::string> ("hash"));
+		ASSERT_EQ (send.hash ().to_string (), send_hash);
 	}
-	ASSERT_EQ (200, response.status);
-	system.deadline_set (10s);
-	while (system.nodes[0]->latest (badem::test_genesis_key.pub) != send.hash ())
+	request.put ("json_block", true);
 	{
-		ASSERT_NO_ERROR (system.poll ());
+		test_response response (request, rpc.config.port, system.io_ctx);
+		system.deadline_set (5s);
+		while (response.status == 0)
+		{
+			ASSERT_NO_ERROR (system.poll ());
+		}
+		ASSERT_EQ (200, response.status);
+		std::error_code ec (badem::error_blocks::invalid_block);
+		ASSERT_EQ (ec.message (), response.json.get<std::string> ("error"));
 	}
-	std::string send_hash (response.json.get<std::string> ("hash"));
-	ASSERT_EQ (send.hash ().to_string (), send_hash);
+}
+
+TEST (rpc, process_json_block)
+{
+	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
+	badem::keypair key;
+	auto latest (system.nodes[0]->latest (badem::test_genesis_key.pub));
+	auto & node1 (*system.nodes[0]);
+	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (latest));
+	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
+	badem::node_rpc_config node_rpc_config;
+	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
+	badem::rpc_config rpc_config (true);
+	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
+	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
+	rpc.start ();
+	boost::property_tree::ptree request;
+	request.put ("action", "process");
+	boost::property_tree::ptree block_node;
+	send.serialize_json (block_node);
+	request.add_child ("block", block_node);
+	{
+		test_response response (request, rpc.config.port, system.io_ctx);
+		system.deadline_set (5s);
+		while (response.status == 0)
+		{
+			ASSERT_NO_ERROR (system.poll ());
+		}
+		ASSERT_EQ (200, response.status);
+		std::error_code ec (badem::error_blocks::invalid_block);
+		ASSERT_EQ (ec.message (), response.json.get<std::string> ("error"));
+	}
+	request.put ("json_block", true);
+	{
+		test_response response (request, rpc.config.port, system.io_ctx);
+		system.deadline_set (5s);
+		while (response.status == 0)
+		{
+			ASSERT_NO_ERROR (system.poll ());
+		}
+		ASSERT_EQ (200, response.status);
+		system.deadline_set (10s);
+		while (system.nodes[0]->latest (badem::test_genesis_key.pub) != send.hash ())
+		{
+			ASSERT_NO_ERROR (system.poll ());
+		}
+		std::string send_hash (response.json.get<std::string> ("hash"));
+		ASSERT_EQ (send.hash ().to_string (), send_hash);
+	}
 }
 
 TEST (rpc, process_block_with_work_watcher)
@@ -1586,10 +1777,11 @@ TEST (rpc, process_block_with_work_watcher)
 	badem::system system;
 	badem::node_config node_config (24000, system.logging);
 	node_config.enable_voting = false;
+	node_config.work_watcher_period = 1s;
 	auto & node1 = *system.add_node (node_config);
 	badem::keypair key;
 	auto latest (system.nodes[0]->latest (badem::test_genesis_key.pub));
-	auto send (std::make_shared<badem::state_block> (badem::test_genesis_key.pub, latest, badem::test_genesis_key.pub, badem::genesis_amount - 100, badem::test_genesis_key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (latest)));
+	auto send (std::make_shared<badem::state_block> (badem::test_genesis_key.pub, latest, badem::test_genesis_key.pub, badem::genesis_amount - 100, badem::test_genesis_key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (latest)));
 	uint64_t difficulty1 (0);
 	badem::work_validate (*send, &difficulty1);
 	auto multiplier1 = badem::difficulty::to_multiplier (difficulty1, node1.network_params.network.publish_threshold);
@@ -1623,7 +1815,7 @@ TEST (rpc, process_block_with_work_watcher)
 	uint64_t updated_difficulty;
 	while (!updated)
 	{
-		std::unique_lock<std::mutex> lock (node1.active.mutex);
+		badem::unique_lock<std::mutex> lock (node1.active.mutex);
 		//fill multipliers_cb and update active difficulty;
 		for (auto i (0); i < node1.active.multipliers_cb.size (); i++)
 		{
@@ -1644,10 +1836,11 @@ TEST (rpc, process_block_with_work_watcher)
 TEST (rpc, process_block_no_work)
 {
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	badem::keypair key;
 	auto latest (system.nodes[0]->latest (badem::test_genesis_key.pub));
 	auto & node1 (*system.nodes[0]);
-	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (latest));
+	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (latest));
 	send.block_work_set (0);
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -1674,10 +1867,11 @@ TEST (rpc, process_block_no_work)
 TEST (rpc, process_republish)
 {
 	badem::system system (24000, 2);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	badem::keypair key;
 	auto latest (system.nodes[0]->latest (badem::test_genesis_key.pub));
 	auto & node1 (*system.nodes[0]);
-	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (latest));
+	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (latest));
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -1707,10 +1901,11 @@ TEST (rpc, process_republish)
 TEST (rpc, process_subtype_send)
 {
 	badem::system system (24000, 2);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	badem::keypair key;
 	auto latest (system.nodes[0]->latest (badem::test_genesis_key.pub));
 	auto & node1 (*system.nodes[0]);
-	badem::state_block send (badem::genesis_account, latest, badem::genesis_account, badem::genesis_amount - badem::kBDM_ratio, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (latest));
+	badem::state_block send (badem::genesis_account, latest, badem::genesis_account, badem::genesis_amount - badem::Gbdm_ratio, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (latest));
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -1762,13 +1957,14 @@ TEST (rpc, process_subtype_open)
 	badem::keypair key;
 	auto latest (system.nodes[0]->latest (badem::test_genesis_key.pub));
 	auto & node1 (*system.nodes[0]);
-	badem::state_block send (badem::genesis_account, latest, badem::genesis_account, badem::genesis_amount - badem::kBDM_ratio, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (latest));
+	badem::state_block send (badem::genesis_account, latest, badem::genesis_account, badem::genesis_amount - badem::Gbdm_ratio, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (latest));
 	{
 		auto transaction (node1.store.tx_begin_write ());
 		ASSERT_EQ (badem::process_result::progress, node1.ledger.process (transaction, send).code);
 	}
+	scoped_io_thread_name_change scoped_thread_name_io;
 	node1.active.start (std::make_shared<badem::state_block> (send));
-	badem::state_block open (key.pub, 0, key.pub, badem::kBDM_ratio, send.hash (), key.prv, key.pub, node1.work_generate_blocking (key.pub));
+	badem::state_block open (key.pub, 0, key.pub, badem::Gbdm_ratio, send.hash (), key.prv, key.pub, *node1.work_generate_blocking (key.pub));
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -1819,13 +2015,14 @@ TEST (rpc, process_subtype_receive)
 	badem::system system (24000, 2);
 	auto latest (system.nodes[0]->latest (badem::test_genesis_key.pub));
 	auto & node1 (*system.nodes[0]);
-	badem::state_block send (badem::genesis_account, latest, badem::genesis_account, badem::genesis_amount - badem::kBDM_ratio, badem::test_genesis_key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (latest));
+	badem::state_block send (badem::genesis_account, latest, badem::genesis_account, badem::genesis_amount - badem::Gbdm_ratio, badem::test_genesis_key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (latest));
 	{
 		auto transaction (node1.store.tx_begin_write ());
 		ASSERT_EQ (badem::process_result::progress, node1.ledger.process (transaction, send).code);
 	}
+	scoped_io_thread_name_change scoped_thread_name_io;
 	node1.active.start (std::make_shared<badem::state_block> (send));
-	badem::state_block receive (badem::test_genesis_key.pub, send.hash (), badem::test_genesis_key.pub, badem::genesis_amount, send.hash (), badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (send.hash ()));
+	badem::state_block receive (badem::test_genesis_key.pub, send.hash (), badem::test_genesis_key.pub, badem::genesis_amount, send.hash (), badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (send.hash ()));
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -1875,11 +2072,11 @@ TEST (rpc, process_subtype_receive)
 TEST (rpc, keepalive)
 {
 	badem::system system (24000, 1);
-	badem::node_init init1;
-	auto node1 (std::make_shared<badem::node> (init1, system.io_ctx, 24001, badem::unique_path (), system.alarm, system.logging, system.work));
+	auto node1 (std::make_shared<badem::node> (system.io_ctx, 24001, badem::unique_path (), system.alarm, system.logging, system.work));
 	node1->start ();
 	system.nodes.push_back (node1);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -1915,9 +2112,10 @@ TEST (rpc, payment_init)
 {
 	badem::system system (24000, 1);
 	auto node1 (system.nodes[0]);
-	badem::keypair wallet_id;
-	auto wallet (node1->wallets.create (wallet_id.pub));
-	ASSERT_TRUE (node1->wallets.items.find (wallet_id.pub) != node1->wallets.items.end ());
+	auto wallet_id = badem::random_wallet_id ();
+	auto wallet (node1->wallets.create (wallet_id));
+	ASSERT_TRUE (node1->wallets.items.find (wallet_id) != node1->wallets.items.end ());
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node1, node_rpc_config);
@@ -1927,7 +2125,7 @@ TEST (rpc, payment_init)
 	rpc.start ();
 	boost::property_tree::ptree request;
 	request.put ("action", "payment_init");
-	request.put ("wallet", wallet_id.pub.to_string ());
+	request.put ("wallet", wallet_id.to_string ());
 	test_response response (request, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
 	while (response.status == 0)
@@ -1942,9 +2140,10 @@ TEST (rpc, payment_begin_end)
 {
 	badem::system system (24000, 1);
 	auto node1 (system.nodes[0]);
-	badem::keypair wallet_id;
-	auto wallet (node1->wallets.create (wallet_id.pub));
-	ASSERT_TRUE (node1->wallets.items.find (wallet_id.pub) != node1->wallets.items.end ());
+	auto wallet_id = badem::random_wallet_id ();
+	auto wallet (node1->wallets.create (wallet_id));
+	ASSERT_TRUE (node1->wallets.items.find (wallet_id) != node1->wallets.items.end ());
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node1, node_rpc_config);
@@ -1954,7 +2153,7 @@ TEST (rpc, payment_begin_end)
 	rpc.start ();
 	boost::property_tree::ptree request1;
 	request1.put ("action", "payment_begin");
-	request1.put ("wallet", wallet_id.pub.to_string ());
+	request1.put ("wallet", wallet_id.to_string ());
 	test_response response1 (request1, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
 	while (response1.status == 0)
@@ -1963,10 +2162,10 @@ TEST (rpc, payment_begin_end)
 	}
 	ASSERT_EQ (200, response1.status);
 	auto account_text (response1.json.get<std::string> ("account"));
-	badem::uint256_union account;
+	badem::account account;
 	ASSERT_FALSE (account.decode_account (account_text));
 	ASSERT_TRUE (wallet->exists (account));
-	badem::block_hash root1;
+	badem::root root1;
 	{
 		auto transaction (node1->store.tx_begin_read ());
 		root1 = node1->ledger.latest_root (transaction, account);
@@ -1988,7 +2187,7 @@ TEST (rpc, payment_begin_end)
 	ASSERT_EQ (wallet->free_accounts.end (), wallet->free_accounts.find (account));
 	boost::property_tree::ptree request2;
 	request2.put ("action", "payment_end");
-	request2.put ("wallet", wallet_id.pub.to_string ());
+	request2.put ("wallet", wallet_id.to_string ());
 	request2.put ("account", account.to_account ());
 	test_response response2 (request2, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
@@ -2011,6 +2210,7 @@ TEST (rpc, payment_end_nonempty)
 	auto transaction (node1->wallets.tx_begin_read ());
 	system.wallet (0)->init_free_accounts (transaction);
 	auto wallet_id (node1->wallets.items.begin ()->first);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node1, node_rpc_config);
@@ -2040,6 +2240,7 @@ TEST (rpc, payment_zero_balance)
 	auto transaction (node1->wallets.tx_begin_read ());
 	system.wallet (0)->init_free_accounts (transaction);
 	auto wallet_id (node1->wallets.items.begin ()->first);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node1, node_rpc_config);
@@ -2058,7 +2259,7 @@ TEST (rpc, payment_zero_balance)
 	}
 	ASSERT_EQ (200, response1.status);
 	auto account_text (response1.json.get<std::string> ("account"));
-	badem::uint256_union account;
+	badem::account account;
 	ASSERT_FALSE (account.decode_account (account_text));
 	ASSERT_NE (badem::test_genesis_key.pub, account);
 }
@@ -2067,9 +2268,10 @@ TEST (rpc, payment_begin_reuse)
 {
 	badem::system system (24000, 1);
 	auto node1 (system.nodes[0]);
-	badem::keypair wallet_id;
-	auto wallet (node1->wallets.create (wallet_id.pub));
-	ASSERT_TRUE (node1->wallets.items.find (wallet_id.pub) != node1->wallets.items.end ());
+	auto wallet_id = badem::random_wallet_id ();
+	auto wallet (node1->wallets.create (wallet_id));
+	ASSERT_TRUE (node1->wallets.items.find (wallet_id) != node1->wallets.items.end ());
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node1, node_rpc_config);
@@ -2079,7 +2281,7 @@ TEST (rpc, payment_begin_reuse)
 	rpc.start ();
 	boost::property_tree::ptree request1;
 	request1.put ("action", "payment_begin");
-	request1.put ("wallet", wallet_id.pub.to_string ());
+	request1.put ("wallet", wallet_id.to_string ());
 	test_response response1 (request1, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
 	while (response1.status == 0)
@@ -2088,13 +2290,13 @@ TEST (rpc, payment_begin_reuse)
 	}
 	ASSERT_EQ (200, response1.status);
 	auto account_text (response1.json.get<std::string> ("account"));
-	badem::uint256_union account;
+	badem::account account;
 	ASSERT_FALSE (account.decode_account (account_text));
 	ASSERT_TRUE (wallet->exists (account));
 	ASSERT_EQ (wallet->free_accounts.end (), wallet->free_accounts.find (account));
 	boost::property_tree::ptree request2;
 	request2.put ("action", "payment_end");
-	request2.put ("wallet", wallet_id.pub.to_string ());
+	request2.put ("wallet", wallet_id.to_string ());
 	request2.put ("account", account.to_account ());
 	test_response response2 (request2, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
@@ -2113,7 +2315,7 @@ TEST (rpc, payment_begin_reuse)
 	}
 	ASSERT_EQ (200, response3.status);
 	auto account2_text (response1.json.get<std::string> ("account"));
-	badem::uint256_union account2;
+	badem::account account2;
 	ASSERT_FALSE (account2.decode_account (account2_text));
 	ASSERT_EQ (account, account2);
 }
@@ -2122,14 +2324,15 @@ TEST (rpc, payment_begin_locked)
 {
 	badem::system system (24000, 1);
 	auto node1 (system.nodes[0]);
-	badem::keypair wallet_id;
-	auto wallet (node1->wallets.create (wallet_id.pub));
+	auto wallet_id = badem::random_wallet_id ();
+	auto wallet (node1->wallets.create (wallet_id));
 	{
 		auto transaction (wallet->wallets.tx_begin_write ());
 		wallet->store.rekey (transaction, "1");
 		ASSERT_TRUE (wallet->store.attempt_password (transaction, ""));
 	}
-	ASSERT_TRUE (node1->wallets.items.find (wallet_id.pub) != node1->wallets.items.end ());
+	scoped_io_thread_name_change scoped_thread_name_io;
+	ASSERT_TRUE (node1->wallets.items.find (wallet_id) != node1->wallets.items.end ());
 	enable_ipc_transport_tcp (node1->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node1, node_rpc_config);
@@ -2139,7 +2342,7 @@ TEST (rpc, payment_begin_locked)
 	rpc.start ();
 	boost::property_tree::ptree request1;
 	request1.put ("action", "payment_begin");
-	request1.put ("wallet", wallet_id.pub.to_string ());
+	request1.put ("wallet", wallet_id.to_string ());
 	test_response response1 (request1, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
 	while (response1.status == 0)
@@ -2157,6 +2360,7 @@ TEST (rpc, payment_wait)
 	badem::keypair key;
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	system.wallet (0)->insert_adhoc (key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node1, node_rpc_config);
@@ -2167,7 +2371,7 @@ TEST (rpc, payment_wait)
 	boost::property_tree::ptree request1;
 	request1.put ("action", "payment_wait");
 	request1.put ("account", key.pub.to_account ());
-	request1.put ("amount", badem::amount (badem::BDM_ratio).to_string_dec ());
+	request1.put ("amount", badem::amount (badem::Mbdm_ratio).to_string_dec ());
 	request1.put ("timeout", "100");
 	test_response response1 (request1, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
@@ -2178,10 +2382,14 @@ TEST (rpc, payment_wait)
 	ASSERT_EQ (200, response1.status);
 	ASSERT_EQ ("nothing", response1.json.get<std::string> ("status"));
 	request1.put ("timeout", "100000");
-	system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, badem::BDM_ratio);
+	scoped_thread_name_io.reset ();
+	system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, badem::Mbdm_ratio);
 	system.alarm.add (std::chrono::steady_clock::now () + std::chrono::milliseconds (500), [&]() {
-		system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, badem::BDM_ratio);
+		system.nodes.front ()->worker.push_task ([&]() {
+			system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, badem::Mbdm_ratio);
+		});
 	});
+	scoped_thread_name_io.renew ();
 	test_response response2 (request1, rpc.config.port, system.io_ctx);
 	while (response2.status == 0)
 	{
@@ -2189,7 +2397,7 @@ TEST (rpc, payment_wait)
 	}
 	ASSERT_EQ (200, response2.status);
 	ASSERT_EQ ("success", response2.json.get<std::string> ("status"));
-	request1.put ("amount", badem::amount (badem::BDM_ratio * 2).to_string_dec ());
+	request1.put ("amount", badem::amount (badem::Mbdm_ratio * 2).to_string_dec ());
 	test_response response3 (request1, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
 	while (response3.status == 0)
@@ -2203,9 +2411,10 @@ TEST (rpc, payment_wait)
 TEST (rpc, peers)
 {
 	badem::system system (24000, 2);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	badem::endpoint endpoint (boost::asio::ip::address_v6::from_string ("fc00::1"), 4000);
 	auto node = system.nodes.front ();
-	node->network.udp_channels.insert (endpoint, badem::protocol_version);
+	node->network.udp_channels.insert (endpoint, node->network_params.protocol.protocol_version);
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -2224,19 +2433,20 @@ TEST (rpc, peers)
 	ASSERT_EQ (200, response.status);
 	auto & peers_node (response.json.get_child ("peers"));
 	ASSERT_EQ (2, peers_node.size ());
-	ASSERT_EQ (std::to_string (badem::protocol_version), peers_node.get<std::string> ("[::1]:24001"));
+	ASSERT_EQ (std::to_string (node->network_params.protocol.protocol_version), peers_node.get<std::string> ("[::1]:24001"));
 	// Previously "[::ffff:80.80.80.80]:4000", but IPv4 address cause "No such node thrown in the test body" issue with peers_node.get
 	std::stringstream endpoint_text;
 	endpoint_text << endpoint;
-	ASSERT_EQ (std::to_string (badem::protocol_version), peers_node.get<std::string> (endpoint_text.str ()));
+	ASSERT_EQ (std::to_string (node->network_params.protocol.protocol_version), peers_node.get<std::string> (endpoint_text.str ()));
 }
 
 TEST (rpc, peers_node_id)
 {
 	badem::system system (24000, 2);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	badem::endpoint endpoint (boost::asio::ip::address_v6::from_string ("fc00::1"), 4000);
 	auto node = system.nodes.front ();
-	node->network.udp_channels.insert (endpoint, badem::protocol_version);
+	node->network.udp_channels.insert (endpoint, node->network_params.protocol.protocol_version);
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -2257,12 +2467,12 @@ TEST (rpc, peers_node_id)
 	auto & peers_node (response.json.get_child ("peers"));
 	ASSERT_EQ (2, peers_node.size ());
 	auto tree1 (peers_node.get_child ("[::1]:24001"));
-	ASSERT_EQ (std::to_string (badem::protocol_version), tree1.get<std::string> ("protocol_version"));
+	ASSERT_EQ (std::to_string (node->network_params.protocol.protocol_version), tree1.get<std::string> ("protocol_version"));
 	ASSERT_EQ (system.nodes[1]->node_id.pub.to_node_id (), tree1.get<std::string> ("node_id"));
 	std::stringstream endpoint_text;
 	endpoint_text << endpoint;
 	auto tree2 (peers_node.get_child (endpoint_text.str ()));
-	ASSERT_EQ (std::to_string (badem::protocol_version), tree2.get<std::string> ("protocol_version"));
+	ASSERT_EQ (std::to_string (node->network_params.protocol.protocol_version), tree2.get<std::string> ("protocol_version"));
 	ASSERT_EQ ("", tree2.get<std::string> ("node_id"));
 }
 
@@ -2272,6 +2482,7 @@ TEST (rpc, pending)
 	badem::keypair key1;
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	auto block1 (system.wallet (0)->send_action (badem::test_genesis_key.pub, key1.pub, 100));
+	scoped_io_thread_name_change scoped_thread_name_io;
 	system.deadline_set (5s);
 	while (system.nodes[0]->active.active (*block1))
 	{
@@ -2400,7 +2611,9 @@ TEST (rpc, pending)
 
 	request.put ("include_only_confirmed", "true");
 	check_block_response_count (1);
+	scoped_thread_name_io.reset ();
 	reset_confirmation_height (system.nodes.front ()->store, block1->account ());
+	scoped_thread_name_io.renew ();
 	check_block_response_count (0);
 }
 
@@ -2410,11 +2623,12 @@ TEST (rpc, search_pending)
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	auto wallet (system.nodes[0]->wallets.items.begin ()->first.to_string ());
 	auto latest (system.nodes[0]->latest (badem::test_genesis_key.pub));
-	badem::send_block block (latest, badem::test_genesis_key.pub, badem::genesis_amount - system.nodes[0]->config.receive_minimum.number (), badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.nodes[0]->work_generate_blocking (latest));
+	badem::send_block block (latest, badem::test_genesis_key.pub, badem::genesis_amount - system.nodes[0]->config.receive_minimum.number (), badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.nodes[0]->work_generate_blocking (latest));
 	{
 		auto transaction (system.nodes[0]->store.tx_begin_write ());
 		ASSERT_EQ (badem::process_result::progress, system.nodes[0]->ledger.process (transaction, block).code);
 	}
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -2447,6 +2661,7 @@ TEST (rpc, version)
 	badem::keypair key;
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	system.wallet (0)->insert_adhoc (key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node1, node_rpc_config);
@@ -2469,7 +2684,7 @@ TEST (rpc, version)
 		auto transaction (system.nodes[0]->store.tx_begin_read ());
 		ASSERT_EQ (std::to_string (node1->store.version_get (transaction)), response1.json.get<std::string> ("store_version"));
 	}
-	ASSERT_EQ (std::to_string (badem::protocol_version), response1.json.get<std::string> ("protocol_version"));
+	ASSERT_EQ (std::to_string (node1->network_params.protocol.protocol_version), response1.json.get<std::string> ("protocol_version"));
 	ASSERT_EQ (boost::str (boost::format ("Badem %1%") % BADEM_VERSION_STRING), response1.json.get<std::string> ("node_vendor"));
 	auto network_label (node1->network_params.network.get_current_network_as_string ());
 	ASSERT_EQ (network_label, response1.json.get<std::string> ("network"));
@@ -2498,6 +2713,7 @@ TEST (rpc, work_generate)
 	badem::keypair key;
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	system.wallet (0)->insert_adhoc (key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -2509,29 +2725,38 @@ TEST (rpc, work_generate)
 	boost::property_tree::ptree request;
 	request.put ("action", "work_generate");
 	request.put ("hash", hash.to_string ());
-	test_response response (request, rpc.config.port, system.io_ctx);
-	system.deadline_set (5s);
-	while (response.status == 0)
-	{
-		ASSERT_NO_ERROR (system.poll ());
-	}
-	ASSERT_EQ (200, response.status);
-	auto work_text (response.json.get<std::string> ("work"));
-	uint64_t work, result_difficulty;
-	ASSERT_FALSE (badem::from_string_hex (work_text, work));
-	ASSERT_FALSE (badem::work_validate (hash, work, &result_difficulty));
-	auto response_difficulty_text (response.json.get<std::string> ("difficulty"));
-	uint64_t response_difficulty;
-	ASSERT_FALSE (badem::from_string_hex (response_difficulty_text, response_difficulty));
-	ASSERT_EQ (result_difficulty, response_difficulty);
-	auto multiplier = response.json.get<double> ("multiplier");
-	ASSERT_NEAR (badem::difficulty::to_multiplier (result_difficulty, node->network_params.network.publish_threshold), multiplier, 1e-6);
+	auto verify_response = [node, &rpc, &system](auto & request, auto & hash) {
+		test_response response (request, rpc.config.port, system.io_ctx);
+		system.deadline_set (5s);
+		while (response.status == 0)
+		{
+			ASSERT_NO_ERROR (system.poll ());
+		}
+		ASSERT_EQ (200, response.status);
+		ASSERT_EQ (hash.to_string (), response.json.get<std::string> ("hash"));
+		auto work_text (response.json.get<std::string> ("work"));
+		uint64_t work, result_difficulty;
+		ASSERT_FALSE (badem::from_string_hex (work_text, work));
+		ASSERT_FALSE (badem::work_validate (hash, work, &result_difficulty));
+		auto response_difficulty_text (response.json.get<std::string> ("difficulty"));
+		uint64_t response_difficulty;
+		ASSERT_FALSE (badem::from_string_hex (response_difficulty_text, response_difficulty));
+		ASSERT_EQ (result_difficulty, response_difficulty);
+		auto multiplier = response.json.get<double> ("multiplier");
+		ASSERT_NEAR (badem::difficulty::to_multiplier (result_difficulty, node->network_params.network.publish_threshold), multiplier, 1e-6);
+	};
+	verify_response (request, hash);
+	request.put ("use_peers", "true");
+	verify_response (request, hash);
 }
 
 TEST (rpc, work_generate_difficulty)
 {
-	badem::system system (24000, 1);
-	auto node (system.nodes[0]);
+	badem::system system;
+	badem::node_config node_config (24000, system.logging);
+	node_config.max_work_generate_difficulty = 0xffff000000000000;
+	auto node = system.add_node (node_config);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -2585,7 +2810,7 @@ TEST (rpc, work_generate_difficulty)
 		ASSERT_GE (result_difficulty, difficulty);
 	}
 	{
-		uint64_t difficulty (node_rpc_config.max_work_generate_difficulty + 1);
+		uint64_t difficulty (node->config.max_work_generate_difficulty + 1);
 		request.put ("difficulty", badem::to_string_hex (difficulty));
 		test_response response (request, rpc.config.port, system.io_ctx);
 		system.deadline_set (5s);
@@ -2601,8 +2826,11 @@ TEST (rpc, work_generate_difficulty)
 
 TEST (rpc, work_generate_multiplier)
 {
-	badem::system system (24000, 1);
-	auto node (system.nodes[0]);
+	badem::system system;
+	badem::node_config node_config (24000, system.logging);
+	node_config.max_work_generate_difficulty = 0xffff000000000000;
+	auto node = system.add_node (node_config);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -2652,7 +2880,7 @@ TEST (rpc, work_generate_multiplier)
 		ASSERT_EQ (response.json.get<std::string> ("error"), ec.message ());
 	}
 	{
-		double max_multiplier (badem::difficulty::to_multiplier (node_rpc_config.max_work_generate_difficulty, node->network_params.network.publish_threshold));
+		double max_multiplier (badem::difficulty::to_multiplier (node->config.max_work_generate_difficulty, node->network_params.network.publish_threshold));
 		request.put ("multiplier", max_multiplier + 1);
 		test_response response (request, rpc.config.port, system.io_ctx);
 		system.deadline_set (5s);
@@ -2673,6 +2901,7 @@ TEST (rpc, work_cancel)
 	badem::keypair key;
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	system.wallet (0)->insert_adhoc (key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -2710,6 +2939,7 @@ TEST (rpc, work_peer_bad)
 	badem::keypair key;
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	system.wallet (0)->insert_adhoc (key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -2720,8 +2950,9 @@ TEST (rpc, work_peer_bad)
 	node2.config.work_peers.push_back (std::make_pair (boost::asio::ip::address_v6::any ().to_string (), 0));
 	badem::block_hash hash1 (1);
 	std::atomic<uint64_t> work (0);
-	node2.work_generate (hash1, [&work](uint64_t work_a) {
-		work = work_a;
+	node2.work_generate (hash1, [&work](boost::optional<uint64_t> work_a) {
+		ASSERT_TRUE (work_a.is_initialized ());
+		work = *work_a;
 	});
 	system.deadline_set (5s);
 	while (badem::work_validate (hash1, work))
@@ -2738,6 +2969,7 @@ TEST (rpc, work_peer_one)
 	badem::keypair key;
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	system.wallet (0)->insert_adhoc (key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -2748,8 +2980,9 @@ TEST (rpc, work_peer_one)
 	node2.config.work_peers.push_back (std::make_pair (node1.network.endpoint ().address ().to_string (), rpc.config.port));
 	badem::keypair key1;
 	uint64_t work (0);
-	node2.work_generate (key1.pub, [&work](uint64_t work_a) {
-		work = work_a;
+	node2.work_generate (key1.pub, [&work](boost::optional<uint64_t> work_a) {
+		ASSERT_TRUE (work_a.is_initialized ());
+		work = *work_a;
 	});
 	system.deadline_set (5s);
 	while (badem::work_validate (key1.pub, work))
@@ -2771,6 +3004,7 @@ TEST (rpc, work_peer_many)
 	badem::keypair key;
 	badem::rpc_config config2 (true);
 	config2.port += 0;
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node2.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server2 (node2, node_rpc_config);
@@ -2799,8 +3033,9 @@ TEST (rpc, work_peer_many)
 	{
 		badem::keypair key1;
 		uint64_t work (0);
-		node1.work_generate (key1.pub, [&work](uint64_t work_a) {
-			work = work_a;
+		node1.work_generate (key1.pub, [&work](boost::optional<uint64_t> work_a) {
+			ASSERT_TRUE (work_a.is_initialized ());
+			work = *work_a;
 		});
 		while (badem::work_validate (key1.pub, work))
 		{
@@ -2817,6 +3052,7 @@ TEST (rpc, block_count)
 	{
 		badem::system system (24000, 1);
 		auto & node1 (*system.nodes[0]);
+		scoped_io_thread_name_change scoped_thread_name_io;
 		enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 		badem::node_rpc_config node_rpc_config;
 		badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -2836,24 +3072,11 @@ TEST (rpc, block_count)
 			ASSERT_EQ (200, response1.status);
 			ASSERT_EQ ("1", response1.json.get<std::string> ("count"));
 			ASSERT_EQ ("0", response1.json.get<std::string> ("unchecked"));
-			{
-				ASSERT_FALSE (response1.json.get_optional<std::string> ("cemented").is_initialized ());
-			}
+			ASSERT_EQ ("1", response1.json.get<std::string> ("cemented"));
 		}
-		request1.put ("include_cemented", "true");
-		test_response response1 (request1, rpc.config.port, system.io_ctx);
-		system.deadline_set (5s);
-		while (response1.status == 0)
-		{
-			ASSERT_NO_ERROR (system.poll ());
-		}
-		ASSERT_EQ (200, response1.status);
-		ASSERT_EQ ("1", response1.json.get<std::string> ("count"));
-		ASSERT_EQ ("0", response1.json.get<std::string> ("unchecked"));
-		ASSERT_EQ ("1", response1.json.get<std::string> ("cemented"));
 	}
 
-	// Should not be able to get the cemented count when enable_control is false.
+	// Should be able to get all counts even when enable_control is false.
 	{
 		badem::system system (24000, 1);
 		auto & node1 (*system.nodes[0]);
@@ -2866,7 +3089,6 @@ TEST (rpc, block_count)
 		rpc.start ();
 		boost::property_tree::ptree request1;
 		request1.put ("action", "block_count");
-		request1.put ("include_cemented", "true");
 		{
 			test_response response1 (request1, rpc.config.port, system.io_ctx);
 			system.deadline_set (5s);
@@ -2875,8 +3097,9 @@ TEST (rpc, block_count)
 				ASSERT_NO_ERROR (system.poll ());
 			}
 			ASSERT_EQ (200, response1.status);
-			std::error_code ec (badem::error_rpc::rpc_control_disabled);
-			ASSERT_EQ (response1.json.get<std::string> ("error"), ec.message ());
+			ASSERT_EQ ("1", response1.json.get<std::string> ("count"));
+			ASSERT_EQ ("0", response1.json.get<std::string> ("unchecked"));
+			ASSERT_EQ ("1", response1.json.get<std::string> ("cemented"));
 		}
 	}
 }
@@ -2885,6 +3108,7 @@ TEST (rpc, frontier_count)
 {
 	badem::system system (24000, 1);
 	auto & node1 (*system.nodes[0]);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -2908,6 +3132,7 @@ TEST (rpc, account_count)
 {
 	badem::system system (24000, 1);
 	auto & node1 (*system.nodes[0]);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -2931,6 +3156,7 @@ TEST (rpc, available_supply)
 {
 	badem::system system (24000, 1);
 	auto & node1 (*system.nodes[0]);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -2948,9 +3174,11 @@ TEST (rpc, available_supply)
 	}
 	ASSERT_EQ (200, response1.status);
 	ASSERT_EQ ("0", response1.json.get<std::string> ("available"));
+	scoped_thread_name_io.reset ();
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	badem::keypair key;
 	auto block (system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, 1));
+	scoped_thread_name_io.renew ();
 	test_response response2 (request1, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
 	while (response2.status == 0)
@@ -2959,7 +3187,9 @@ TEST (rpc, available_supply)
 	}
 	ASSERT_EQ (200, response2.status);
 	ASSERT_EQ ("1", response2.json.get<std::string> ("available"));
+	scoped_thread_name_io.reset ();
 	auto block2 (system.wallet (0)->send_action (badem::test_genesis_key.pub, 0, 100)); // Sending to burning 0 account
+	scoped_thread_name_io.renew ();
 	test_response response3 (request1, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
 	while (response3.status == 0)
@@ -2970,10 +3200,11 @@ TEST (rpc, available_supply)
 	ASSERT_EQ ("1", response3.json.get<std::string> ("available"));
 }
 
-TEST (rpc, bdm_to_raw)
+TEST (rpc, mbdm_to_raw)
 {
 	badem::system system (24000, 1);
 	auto & node1 (*system.nodes[0]);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -2982,7 +3213,7 @@ TEST (rpc, bdm_to_raw)
 	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
 	rpc.start ();
 	boost::property_tree::ptree request1;
-	request1.put ("action", "bdm_to_raw");
+	request1.put ("action", "mbdm_to_raw");
 	request1.put ("amount", "1");
 	test_response response1 (request1, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
@@ -2991,13 +3222,14 @@ TEST (rpc, bdm_to_raw)
 		ASSERT_NO_ERROR (system.poll ());
 	}
 	ASSERT_EQ (200, response1.status);
-	ASSERT_EQ (badem::BDM_ratio.convert_to<std::string> (), response1.json.get<std::string> ("amount"));
+	ASSERT_EQ (badem::Mbdm_ratio.convert_to<std::string> (), response1.json.get<std::string> ("amount"));
 }
 
-TEST (rpc, bdm_from_raw)
+TEST (rpc, mbdm_from_raw)
 {
 	badem::system system (24000, 1);
 	auto & node1 (*system.nodes[0]);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -3006,8 +3238,8 @@ TEST (rpc, bdm_from_raw)
 	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
 	rpc.start ();
 	boost::property_tree::ptree request1;
-	request1.put ("action", "bdm_from_raw");
-	request1.put ("amount", badem::BDM_ratio.convert_to<std::string> ());
+	request1.put ("action", "mbdm_from_raw");
+	request1.put ("amount", badem::Mbdm_ratio.convert_to<std::string> ());
 	test_response response1 (request1, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
 	while (response1.status == 0)
@@ -3018,10 +3250,11 @@ TEST (rpc, bdm_from_raw)
 	ASSERT_EQ ("1", response1.json.get<std::string> ("amount"));
 }
 
-TEST (rpc, bademcik_to_raw)
+TEST (rpc, kbdm_to_raw)
 {
 	badem::system system (24000, 1);
 	auto & node1 (*system.nodes[0]);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -3030,7 +3263,7 @@ TEST (rpc, bademcik_to_raw)
 	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
 	rpc.start ();
 	boost::property_tree::ptree request1;
-	request1.put ("action", "bademcik_to_raw");
+	request1.put ("action", "kbdm_to_raw");
 	request1.put ("amount", "1");
 	test_response response1 (request1, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
@@ -3039,13 +3272,14 @@ TEST (rpc, bademcik_to_raw)
 		ASSERT_NO_ERROR (system.poll ());
 	}
 	ASSERT_EQ (200, response1.status);
-	ASSERT_EQ (badem::RAW_ratio.convert_to<std::string> (), response1.json.get<std::string> ("amount"));
+	ASSERT_EQ (badem::kbdm_ratio.convert_to<std::string> (), response1.json.get<std::string> ("amount"));
 }
 
-TEST (rpc, bademcik_from_raw)
+TEST (rpc, kbdm_from_raw)
 {
 	badem::system system (24000, 1);
 	auto & node1 (*system.nodes[0]);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -3054,8 +3288,8 @@ TEST (rpc, bademcik_from_raw)
 	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
 	rpc.start ();
 	boost::property_tree::ptree request1;
-	request1.put ("action", "bademcik_from_raw");
-	request1.put ("amount", badem::RAW_ratio.convert_to<std::string> ());
+	request1.put ("action", "kbdm_from_raw");
+	request1.put ("amount", badem::kbdm_ratio.convert_to<std::string> ());
 	test_response response1 (request1, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
 	while (response1.status == 0)
@@ -3070,6 +3304,7 @@ TEST (rpc, badem_to_raw)
 {
 	badem::system system (24000, 1);
 	auto & node1 (*system.nodes[0]);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -3087,13 +3322,14 @@ TEST (rpc, badem_to_raw)
 		ASSERT_NO_ERROR (system.poll ());
 	}
 	ASSERT_EQ (200, response1.status);
-	ASSERT_EQ (badem::RAW_ratio.convert_to<std::string> (), response1.json.get<std::string> ("amount"));
+	ASSERT_EQ (badem::bdm_ratio.convert_to<std::string> (), response1.json.get<std::string> ("amount"));
 }
 
 TEST (rpc, badem_from_raw)
 {
 	badem::system system (24000, 1);
 	auto & node1 (*system.nodes[0]);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -3103,7 +3339,7 @@ TEST (rpc, badem_from_raw)
 	rpc.start ();
 	boost::property_tree::ptree request1;
 	request1.put ("action", "badem_from_raw");
-	request1.put ("amount", badem::RAW_ratio.convert_to<std::string> ());
+	request1.put ("amount", badem::bdm_ratio.convert_to<std::string> ());
 	test_response response1 (request1, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
 	while (response1.status == 0)
@@ -3118,6 +3354,7 @@ TEST (rpc, account_representative)
 {
 	badem::system system (24000, 1);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -3143,6 +3380,7 @@ TEST (rpc, account_representative_set)
 {
 	badem::system system (24000, 1);
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -3173,16 +3411,50 @@ TEST (rpc, account_representative_set)
 	ASSERT_EQ (rep.pub, system.nodes[0]->store.block_get (transaction, hash)->representative ());
 }
 
+TEST (rpc, account_representative_set_work_disabled)
+{
+	badem::system system (24000, 0);
+	badem::node_config node_config (24000, system.logging);
+	node_config.work_threads = 0;
+	auto & node = *system.add_node (node_config);
+	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
+	enable_ipc_transport_tcp (node.config.ipc_config.transport_tcp);
+	badem::node_rpc_config node_rpc_config;
+	badem::ipc::ipc_server ipc_server (node, node_rpc_config);
+	badem::rpc_config rpc_config (true);
+	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
+	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
+	rpc.start ();
+	boost::property_tree::ptree request;
+	badem::keypair rep;
+	request.put ("account", badem::genesis_account.to_account ());
+	request.put ("representative", rep.pub.to_account ());
+	request.put ("wallet", system.nodes[0]->wallets.items.begin ()->first.to_string ());
+	request.put ("action", "account_representative_set");
+	{
+		test_response response (request, rpc.config.port, system.io_ctx);
+		system.deadline_set (10s);
+		while (response.status == 0)
+		{
+			ASSERT_NO_ERROR (system.poll ());
+		}
+		ASSERT_EQ (200, response.status);
+		ASSERT_EQ (std::error_code (badem::error_common::disabled_work_generation).message (), response.json.get<std::string> ("error"));
+	}
+}
+
 TEST (rpc, bootstrap)
 {
 	badem::system system0 (24000, 1);
 	badem::system system1 (24001, 1);
 	auto latest (system1.nodes[0]->latest (badem::test_genesis_key.pub));
-	badem::send_block send (latest, badem::genesis_account, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system1.nodes[0]->work_generate_blocking (latest));
+	badem::send_block send (latest, badem::genesis_account, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system1.nodes[0]->work_generate_blocking (latest));
 	{
 		auto transaction (system1.nodes[0]->store.tx_begin_write ());
 		ASSERT_EQ (badem::process_result::progress, system1.nodes[0]->ledger.process (transaction, send).code);
 	}
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto & node = system0.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -3212,6 +3484,7 @@ TEST (rpc, account_remove)
 {
 	badem::system system0 (24000, 1);
 	auto key1 (system0.wallet (0)->deterministic_insert ());
+	scoped_io_thread_name_change scoped_thread_name_io;
 	ASSERT_TRUE (system0.wallet (0)->exists (key1));
 	auto & node = system0.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
@@ -3237,6 +3510,7 @@ TEST (rpc, representatives)
 {
 	badem::system system0 (24000, 1);
 	auto & node = system0.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -3273,6 +3547,7 @@ TEST (rpc, wallet_seed)
 		auto transaction (system.nodes[0]->wallets.tx_begin_read ());
 		system.wallet (0)->store.seed (seed, transaction);
 	}
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto & node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -3300,16 +3575,18 @@ TEST (rpc, wallet_seed)
 TEST (rpc, wallet_change_seed)
 {
 	badem::system system0 (24000, 1);
-	badem::keypair seed;
+	badem::raw_key seed;
+	badem::random_pool::generate_block (seed.data.bytes.data (), seed.data.bytes.size ());
 	{
 		auto transaction (system0.nodes[0]->wallets.tx_begin_read ());
 		badem::raw_key seed0;
+		badem::random_pool::generate_block (seed0.data.bytes.data (), seed0.data.bytes.size ());
 		system0.wallet (0)->store.seed (seed0, transaction);
-		ASSERT_NE (seed.pub, seed0.data);
+		ASSERT_NE (seed, seed0);
 	}
-	badem::raw_key prv;
-	badem::deterministic_key (seed.pub, 0, prv.data);
-	auto pub (badem::pub_key (prv.data));
+	scoped_io_thread_name_change scoped_thread_name_io;
+	auto prv = badem::deterministic_key (seed, 0);
+	auto pub (badem::pub_key (prv));
 	auto & node = system0.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -3321,7 +3598,7 @@ TEST (rpc, wallet_change_seed)
 	boost::property_tree::ptree request;
 	request.put ("action", "wallet_change_seed");
 	request.put ("wallet", system0.nodes[0]->wallets.items.begin ()->first.to_string ());
-	request.put ("seed", seed.pub.to_string ());
+	request.put ("seed", seed.data.to_string ());
 	test_response response (request, rpc.config.port, system0.io_ctx);
 	system0.deadline_set (5s);
 	while (response.status == 0)
@@ -3333,10 +3610,10 @@ TEST (rpc, wallet_change_seed)
 		auto transaction (system0.nodes[0]->wallets.tx_begin_read ());
 		badem::raw_key seed0;
 		system0.wallet (0)->store.seed (seed0, transaction);
-		ASSERT_EQ (seed.pub, seed0.data);
+		ASSERT_EQ (seed, seed0);
 	}
 	auto account_text (response.json.get<std::string> ("last_restored_account"));
-	badem::uint256_union account;
+	badem::account account;
 	ASSERT_FALSE (account.decode_account (account_text));
 	ASSERT_TRUE (system0.wallet (0)->exists (account));
 	ASSERT_EQ (pub, account);
@@ -3347,6 +3624,7 @@ TEST (rpc, wallet_frontiers)
 {
 	badem::system system0 (24000, 1);
 	system0.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto & node = system0.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -3368,7 +3646,7 @@ TEST (rpc, wallet_frontiers)
 	std::vector<badem::account> frontiers;
 	for (auto i (frontiers_node.begin ()), n (frontiers_node.end ()); i != n; ++i)
 	{
-		frontiers.push_back (badem::block_hash (i->second.get<std::string> ("")));
+		frontiers.push_back (badem::account (i->second.get<std::string> ("")));
 	}
 	ASSERT_EQ (1, frontiers.size ());
 	ASSERT_EQ (system0.nodes[0]->latest (badem::genesis_account), frontiers[0]);
@@ -3382,6 +3660,7 @@ TEST (rpc, work_validate)
 	badem::keypair key;
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	system.wallet (0)->insert_adhoc (key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -3390,7 +3669,7 @@ TEST (rpc, work_validate)
 	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
 	rpc.start ();
 	badem::block_hash hash (1);
-	uint64_t work1 (node1.work_generate_blocking (hash));
+	uint64_t work1 (*node1.work_generate_blocking (hash));
 	boost::property_tree::ptree request;
 	request.put ("action", "work_validate");
 	request.put ("hash", hash.to_string ());
@@ -3461,7 +3740,7 @@ TEST (rpc, work_validate)
 		bool validate (response.json.get<bool> ("valid"));
 		ASSERT_EQ (result_difficulty >= difficulty4, validate);
 	}
-	uint64_t work3 (node1.work_generate_blocking (hash, difficulty4));
+	uint64_t work3 (*node1.work_generate_blocking (hash, difficulty4));
 	request.put ("work", badem::to_string_hex (work3));
 	{
 		test_response response (request, rpc.config.port, system.io_ctx);
@@ -3485,6 +3764,7 @@ TEST (rpc, successors)
 	ASSERT_FALSE (genesis.is_zero ());
 	auto block (system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, 1));
 	ASSERT_NE (nullptr, block);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -3530,11 +3810,12 @@ TEST (rpc, bootstrap_any)
 	badem::system system0 (24000, 1);
 	badem::system system1 (24001, 1);
 	auto latest (system1.nodes[0]->latest (badem::test_genesis_key.pub));
-	badem::send_block send (latest, badem::genesis_account, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system1.nodes[0]->work_generate_blocking (latest));
+	badem::send_block send (latest, badem::genesis_account, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system1.nodes[0]->work_generate_blocking (latest));
 	{
 		auto transaction (system1.nodes[0]->store.tx_begin_write ());
 		ASSERT_EQ (badem::process_result::progress, system1.nodes[0]->ledger.process (transaction, send).code);
 	}
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto & node = system0.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -3561,10 +3842,11 @@ TEST (rpc, republish)
 	badem::genesis genesis;
 	auto & node1 (*system.nodes[0]);
 	auto latest (node1.latest (badem::test_genesis_key.pub));
-	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (latest));
+	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (latest));
 	node1.process (send);
-	badem::open_block open (send.hash (), key.pub, key.pub, key.prv, key.pub, node1.work_generate_blocking (key.pub));
+	badem::open_block open (send.hash (), key.pub, key.pub, key.prv, key.pub, *node1.work_generate_blocking (key.pub));
 	ASSERT_EQ (badem::process_result::progress, node1.process (open).code);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -3647,6 +3929,7 @@ TEST (rpc, deterministic_key)
 	badem::account account1 (system0.wallet (0)->deterministic_insert ());
 	badem::account account2 (system0.wallet (0)->deterministic_insert ());
 	auto & node = system0.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -3682,6 +3965,7 @@ TEST (rpc, accounts_balances)
 {
 	badem::system system (24000, 1);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -3719,6 +4003,7 @@ TEST (rpc, accounts_frontiers)
 	badem::system system (24000, 1);
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -3755,6 +4040,7 @@ TEST (rpc, accounts_pending)
 	badem::keypair key1;
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	auto block1 (system.wallet (0)->send_action (badem::test_genesis_key.pub, key1.pub, 100));
+	scoped_io_thread_name_change scoped_thread_name_io;
 	system.deadline_set (5s);
 	while (system.nodes[0]->active.active (*block1))
 	{
@@ -3867,7 +4153,9 @@ TEST (rpc, accounts_pending)
 
 	request.put ("include_only_confirmed", "true");
 	check_block_response_count (system, rpc, request, 1);
+	scoped_thread_name_io.reset ();
 	reset_confirmation_height (system.nodes.front ()->store, block1->account ());
+	scoped_thread_name_io.renew ();
 	check_block_response_count (system, rpc, request, 0);
 }
 
@@ -3875,6 +4163,7 @@ TEST (rpc, blocks)
 {
 	badem::system system (24000, 1);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -3919,6 +4208,7 @@ TEST (rpc, wallet_info)
 	}
 	account = system.wallet (0)->deterministic_insert ();
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -3955,6 +4245,7 @@ TEST (rpc, wallet_balances)
 	badem::system system0 (24000, 1);
 	system0.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	auto & node = system0.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -3981,8 +4272,10 @@ TEST (rpc, wallet_balances)
 		ASSERT_EQ ("0", pending_text);
 	}
 	badem::keypair key;
+	scoped_thread_name_io.reset ();
 	system0.wallet (0)->insert_adhoc (key.prv);
 	auto send (system0.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, 1));
+	scoped_thread_name_io.renew ();
 	request.put ("threshold", "2");
 	test_response response1 (request, rpc.config.port, system0.io_ctx);
 	while (response1.status == 0)
@@ -4008,6 +4301,7 @@ TEST (rpc, pending_exists)
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	auto hash0 (system.nodes[0]->latest (badem::genesis_account));
 	auto block1 (system.wallet (0)->send_action (badem::test_genesis_key.pub, key1.pub, 100));
+	scoped_io_thread_name_change scoped_thread_name_io;
 	system.deadline_set (5s);
 	while (system.nodes[0]->active.active (*block1))
 	{
@@ -4044,7 +4338,9 @@ TEST (rpc, pending_exists)
 
 	request.put ("include_only_confirmed", "true");
 	pending_exists ("1");
+	scoped_thread_name_io.reset ();
 	reset_confirmation_height (system.nodes.front ()->store, block1->account ());
+	scoped_thread_name_io.renew ();
 	pending_exists ("0");
 }
 
@@ -4056,6 +4352,7 @@ TEST (rpc, wallet_pending)
 	system0.wallet (0)->insert_adhoc (key1.prv);
 	auto block1 (system0.wallet (0)->send_action (badem::test_genesis_key.pub, key1.pub, 100));
 	auto iterations (0);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	while (system0.nodes[0]->active.active (*block1))
 	{
 		system0.poll ();
@@ -4154,8 +4451,9 @@ TEST (rpc, wallet_pending)
 
 	request.put ("include_only_confirmed", "true");
 	check_block_response_count (system0, rpc, request, 1);
+	scoped_thread_name_io.reset ();
 	reset_confirmation_height (system0.nodes.front ()->store, block1->account ());
-
+	scoped_thread_name_io.renew ();
 	{
 		test_response response (request, rpc.config.port, system0.io_ctx);
 		system0.deadline_set (5s);
@@ -4172,6 +4470,7 @@ TEST (rpc, receive_minimum)
 {
 	badem::system system (24000, 1);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -4196,6 +4495,7 @@ TEST (rpc, receive_minimum_set)
 {
 	badem::system system (24000, 1);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -4225,6 +4525,7 @@ TEST (rpc, work_get)
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	system.wallet (0)->work_cache_blocking (badem::test_genesis_key.pub, system.nodes[0]->latest (badem::test_genesis_key.pub));
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -4256,6 +4557,7 @@ TEST (rpc, wallet_work_get)
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	system.wallet (0)->work_cache_blocking (badem::test_genesis_key.pub, system.nodes[0]->latest (badem::test_genesis_key.pub));
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -4291,6 +4593,7 @@ TEST (rpc, work_set)
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	uint64_t work0 (100);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -4323,11 +4626,12 @@ TEST (rpc, search_pending_all)
 	badem::system system (24000, 1);
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	auto latest (system.nodes[0]->latest (badem::test_genesis_key.pub));
-	badem::send_block block (latest, badem::test_genesis_key.pub, badem::genesis_amount - system.nodes[0]->config.receive_minimum.number (), badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.nodes[0]->work_generate_blocking (latest));
+	badem::send_block block (latest, badem::test_genesis_key.pub, badem::genesis_amount - system.nodes[0]->config.receive_minimum.number (), badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.nodes[0]->work_generate_blocking (latest));
 	{
 		auto transaction (system.nodes[0]->store.tx_begin_write ());
 		ASSERT_EQ (badem::process_result::progress, system.nodes[0]->ledger.process (transaction, block).code);
 	}
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -4367,10 +4671,11 @@ TEST (rpc, wallet_republish)
 	system.wallet (0)->insert_adhoc (key.prv);
 	auto & node1 (*system.nodes[0]);
 	auto latest (system.nodes[0]->latest (badem::test_genesis_key.pub));
-	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (latest));
+	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (latest));
 	system.nodes[0]->process (send);
-	badem::open_block open (send.hash (), key.pub, key.pub, key.prv, key.pub, node1.work_generate_blocking (key.pub));
+	badem::open_block open (send.hash (), key.pub, key.pub, key.prv, key.pub, *node1.work_generate_blocking (key.pub));
 	ASSERT_EQ (badem::process_result::progress, system.nodes[0]->process (open).code);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -4408,11 +4713,12 @@ TEST (rpc, delegators)
 	system.wallet (0)->insert_adhoc (key.prv);
 	auto & node1 (*system.nodes[0]);
 	auto latest (system.nodes[0]->latest (badem::test_genesis_key.pub));
-	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (latest));
+	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (latest));
 	system.nodes[0]->process (send);
-	badem::open_block open (send.hash (), badem::test_genesis_key.pub, key.pub, key.prv, key.pub, node1.work_generate_blocking (key.pub));
+	badem::open_block open (send.hash (), badem::test_genesis_key.pub, key.pub, key.prv, key.pub, *node1.work_generate_blocking (key.pub));
 	ASSERT_EQ (badem::process_result::progress, system.nodes[0]->process (open).code);
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
 	badem::rpc_config rpc_config (true);
@@ -4448,10 +4754,11 @@ TEST (rpc, delegators_count)
 	system.wallet (0)->insert_adhoc (key.prv);
 	auto & node1 (*system.nodes[0]);
 	auto latest (node1.latest (badem::test_genesis_key.pub));
-	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (latest));
+	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (latest));
 	node1.process (send);
-	badem::open_block open (send.hash (), badem::test_genesis_key.pub, key.pub, key.prv, key.pub, node1.work_generate_blocking (key.pub));
+	badem::open_block open (send.hash (), badem::test_genesis_key.pub, key.pub, key.prv, key.pub, *node1.work_generate_blocking (key.pub));
 	ASSERT_EQ (badem::process_result::progress, system.nodes[0]->process (open).code);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -4480,6 +4787,7 @@ TEST (rpc, account_info)
 	badem::genesis genesis;
 
 	auto & node1 (*system.nodes[0]);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -4506,16 +4814,18 @@ TEST (rpc, account_info)
 		ASSERT_EQ (error.get (), std::error_code (badem::error_common::account_not_found).message ());
 	}
 
+	scoped_thread_name_io.reset ();
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	system.wallet (0)->insert_adhoc (key.prv);
 	auto latest (system.nodes[0]->latest (badem::test_genesis_key.pub));
-	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (latest));
+	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (latest));
 	system.nodes[0]->process (send);
 	auto time (badem::seconds_since_epoch ());
 	{
 		auto transaction = node1.store.tx_begin_write ();
 		node1.store.confirmation_height_put (transaction, badem::test_genesis_key.pub, 1);
 	}
+	scoped_thread_name_io.renew ();
 
 	request.put ("account", badem::test_genesis_key.pub.to_account ());
 	{
@@ -4575,8 +4885,10 @@ TEST (rpc, json_block_input)
 {
 	badem::system system (24000, 1);
 	badem::keypair key;
+	system.wallet (0)->insert_adhoc (key.prv);
 	auto & node1 (*system.nodes[0]);
-	badem::state_block send (badem::genesis_account, node1.latest (badem::test_genesis_key.pub), badem::genesis_account, badem::genesis_amount - badem::kBDM_ratio, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, 0);
+	badem::state_block send (badem::genesis_account, node1.latest (badem::test_genesis_key.pub), badem::genesis_account, badem::genesis_amount - badem::Gbdm_ratio, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, 0);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -4587,7 +4899,6 @@ TEST (rpc, json_block_input)
 	boost::property_tree::ptree request;
 	request.put ("action", "sign");
 	request.put ("json_block", "true");
-	system.wallet (0)->insert_adhoc (key.prv);
 	std::string wallet;
 	system.nodes[0]->wallets.items.begin ()->first.encode_hex (wallet);
 	request.put ("wallet", wallet);
@@ -4620,8 +4931,9 @@ TEST (rpc, json_block_output)
 	system.wallet (0)->insert_adhoc (key.prv);
 	auto & node1 (*system.nodes[0]);
 	auto latest (system.nodes[0]->latest (badem::test_genesis_key.pub));
-	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (latest));
+	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (latest));
 	system.nodes[0]->process (send);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -4651,6 +4963,7 @@ TEST (rpc, blocks_info)
 {
 	badem::system system (24000, 1);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -4751,12 +5064,13 @@ TEST (rpc, blocks_info_subtype)
 	badem::keypair key;
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	system.wallet (0)->insert_adhoc (key.prv);
-	auto send (system.wallet (0)->send_action (badem::test_genesis_key.pub, badem::test_genesis_key.pub, badem::kBDM_ratio));
+	auto send (system.wallet (0)->send_action (badem::test_genesis_key.pub, badem::test_genesis_key.pub, badem::Gbdm_ratio));
 	ASSERT_NE (nullptr, send);
-	auto receive (system.wallet (0)->receive_action (*send, key.pub, badem::kBDM_ratio));
+	auto receive (system.wallet (0)->receive_action (*send, key.pub, badem::Gbdm_ratio));
 	ASSERT_NE (nullptr, receive);
 	auto change (system.wallet (0)->change_action (badem::test_genesis_key.pub, key.pub));
 	ASSERT_NE (nullptr, change);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -4796,6 +5110,7 @@ TEST (rpc, work_peers_all)
 	badem::system system (24000, 1);
 	auto & node1 (*system.nodes[0]);
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -4805,7 +5120,7 @@ TEST (rpc, work_peers_all)
 	rpc.start ();
 	boost::property_tree::ptree request;
 	request.put ("action", "work_peer_add");
-	request.put ("address", "::ffff:0.0.0.0");
+	request.put ("address", "::1");
 	request.put ("port", "0");
 	test_response response (request, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
@@ -4832,7 +5147,7 @@ TEST (rpc, work_peers_all)
 		peers.push_back (i->second.get<std::string> (""));
 	}
 	ASSERT_EQ (1, peers.size ());
-	ASSERT_EQ ("::ffff:0.0.0.0:0", peers[0]);
+	ASSERT_EQ ("::1:0", peers[0]);
 	boost::property_tree::ptree request2;
 	request2.put ("action", "work_peers_clear");
 	test_response response2 (request2, rpc.config.port, system.io_ctx);
@@ -4864,6 +5179,7 @@ TEST (rpc, block_count_type)
 	auto receive (system.wallet (0)->receive_action (*send, badem::test_genesis_key.pub, system.nodes[0]->config.receive_minimum.number ()));
 	ASSERT_NE (nullptr, receive);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -4904,11 +5220,12 @@ TEST (rpc, ledger)
 	auto genesis_balance (badem::genesis_amount);
 	auto send_amount (genesis_balance - 100);
 	genesis_balance -= send_amount;
-	badem::send_block send (latest, key.pub, genesis_balance, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (latest));
+	badem::send_block send (latest, key.pub, genesis_balance, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (latest));
 	node1.process (send);
-	badem::open_block open (send.hash (), badem::test_genesis_key.pub, key.pub, key.prv, key.pub, node1.work_generate_blocking (key.pub));
+	badem::open_block open (send.hash (), badem::test_genesis_key.pub, key.pub, key.prv, key.pub, *node1.work_generate_blocking (key.pub));
 	ASSERT_EQ (badem::process_result::progress, node1.process (open).code);
 	auto time (badem::seconds_since_epoch ());
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -4994,8 +5311,10 @@ TEST (rpc, ledger)
 	}
 	auto send2_amount (50);
 	genesis_balance -= send2_amount;
-	badem::send_block send2 (send.hash (), key.pub, genesis_balance, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (send.hash ()));
+	badem::send_block send2 (send.hash (), key.pub, genesis_balance, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (send.hash ()));
+	scoped_thread_name_io.reset ();
 	node1.process (send2);
+	scoped_thread_name_io.renew ();
 	// When asking for pending, pending amount is taken into account for threshold so the account must show up
 	request.put ("count", 2);
 	request.put ("threshold", (send_amount + send2_amount).convert_to<std::string> ());
@@ -5022,6 +5341,7 @@ TEST (rpc, accounts_create)
 {
 	badem::system system (24000, 1);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -5044,7 +5364,7 @@ TEST (rpc, accounts_create)
 	for (auto i (accounts.begin ()), n (accounts.end ()); i != n; ++i)
 	{
 		std::string account_text (i->second.get<std::string> (""));
-		badem::uint256_union account;
+		badem::account account;
 		ASSERT_FALSE (account.decode_account (account_text));
 		ASSERT_TRUE (system.wallet (0)->exists (account));
 	}
@@ -5060,10 +5380,11 @@ TEST (rpc, block_create)
 	system.wallet (0)->insert_adhoc (key.prv);
 	auto & node1 (*system.nodes[0]);
 	auto latest (node1.latest (badem::test_genesis_key.pub));
-	auto send_work = node1.work_generate_blocking (latest);
+	auto send_work = *node1.work_generate_blocking (latest);
 	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, send_work);
-	auto open_work = node1.work_generate_blocking (key.pub);
+	auto open_work = *node1.work_generate_blocking (key.pub);
 	badem::open_block open (send.hash (), badem::test_genesis_key.pub, key.pub, key.prv, key.pub, open_work);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -5095,7 +5416,9 @@ TEST (rpc, block_create)
 	boost::property_tree::read_json (block_stream, block_l);
 	auto send_block (badem::deserialize_block_json (block_l));
 	ASSERT_EQ (send.hash (), send_block->hash ());
+	scoped_thread_name_io.reset ();
 	system.nodes[0]->process (send);
+	scoped_thread_name_io.renew ();
 	boost::property_tree::ptree request1;
 	request1.put ("action", "block_create");
 	request1.put ("type", "open");
@@ -5119,7 +5442,9 @@ TEST (rpc, block_create)
 	boost::property_tree::read_json (block_stream1, block_l);
 	auto open_block (badem::deserialize_block_json (block_l));
 	ASSERT_EQ (open.hash (), open_block->hash ());
+	scoped_thread_name_io.reset ();
 	ASSERT_EQ (badem::process_result::progress, system.nodes[0]->process (open).code);
+	scoped_thread_name_io.renew ();
 	request1.put ("representative", key.pub.to_account ());
 	test_response response2 (request1, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
@@ -5130,7 +5455,7 @@ TEST (rpc, block_create)
 	ASSERT_EQ (200, response2.status);
 	std::string open2_hash (response2.json.get<std::string> ("hash"));
 	ASSERT_NE (open.hash ().to_string (), open2_hash); // different blocks with wrong representative
-	auto change_work = node1.work_generate_blocking (open.hash ());
+	auto change_work = *node1.work_generate_blocking (open.hash ());
 	badem::change_block change (open.hash (), key.pub, key.prv, key.pub, change_work);
 	request1.put ("type", "change");
 	request1.put ("work", badem::to_string_hex (change_work));
@@ -5148,9 +5473,11 @@ TEST (rpc, block_create)
 	boost::property_tree::read_json (block_stream4, block_l);
 	auto change_block (badem::deserialize_block_json (block_l));
 	ASSERT_EQ (change.hash (), change_block->hash ());
+	scoped_thread_name_io.reset ();
 	ASSERT_EQ (badem::process_result::progress, node1.process (change).code);
-	badem::send_block send2 (send.hash (), key.pub, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (send.hash ()));
+	badem::send_block send2 (send.hash (), key.pub, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (send.hash ()));
 	ASSERT_EQ (badem::process_result::progress, system.nodes[0]->process (send2).code);
+	scoped_thread_name_io.renew ();
 	boost::property_tree::ptree request2;
 	request2.put ("action", "block_create");
 	request2.put ("type", "receive");
@@ -5158,7 +5485,7 @@ TEST (rpc, block_create)
 	request2.put ("account", key.pub.to_account ());
 	request2.put ("source", send2.hash ().to_string ());
 	request2.put ("previous", change.hash ().to_string ());
-	request2.put ("work", badem::to_string_hex (node1.work_generate_blocking (change.hash ())));
+	request2.put ("work", badem::to_string_hex (*node1.work_generate_blocking (change.hash ())));
 	test_response response5 (request2, rpc.config.port, system.io_ctx);
 	system.deadline_set (5s);
 	while (response5.status == 0)
@@ -5190,10 +5517,11 @@ TEST (rpc, block_create_state)
 	request.put ("account", badem::test_genesis_key.pub.to_account ());
 	request.put ("previous", genesis.hash ().to_string ());
 	request.put ("representative", badem::test_genesis_key.pub.to_account ());
-	request.put ("balance", (badem::genesis_amount - badem::kBDM_ratio).convert_to<std::string> ());
+	request.put ("balance", (badem::genesis_amount - badem::Gbdm_ratio).convert_to<std::string> ());
 	request.put ("link", key.pub.to_account ());
-	request.put ("work", badem::to_string_hex (system.nodes[0]->work_generate_blocking (genesis.hash ())));
+	request.put ("work", badem::to_string_hex (*system.nodes[0]->work_generate_blocking (genesis.hash ())));
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -5217,6 +5545,7 @@ TEST (rpc, block_create_state)
 	ASSERT_NE (nullptr, state_block);
 	ASSERT_EQ (badem::block_type::state, state_block->type ());
 	ASSERT_EQ (state_hash, state_block->hash ().to_string ());
+	scoped_thread_name_io.reset ();
 	auto process_result (system.nodes[0]->process (*state_block));
 	ASSERT_EQ (badem::process_result::progress, process_result.code);
 }
@@ -5227,7 +5556,7 @@ TEST (rpc, block_create_state_open)
 	badem::keypair key;
 	badem::genesis genesis;
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
-	auto send_block (system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, badem::kBDM_ratio));
+	auto send_block (system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, badem::Gbdm_ratio));
 	ASSERT_NE (nullptr, send_block);
 	boost::property_tree::ptree request;
 	request.put ("action", "block_create");
@@ -5236,10 +5565,11 @@ TEST (rpc, block_create_state_open)
 	request.put ("account", key.pub.to_account ());
 	request.put ("previous", 0);
 	request.put ("representative", badem::test_genesis_key.pub.to_account ());
-	request.put ("balance", badem::kBDM_ratio.convert_to<std::string> ());
+	request.put ("balance", badem::Gbdm_ratio.convert_to<std::string> ());
 	request.put ("link", send_block->hash ().to_string ());
-	request.put ("work", badem::to_string_hex (system.nodes[0]->work_generate_blocking (key.pub)));
+	request.put ("work", badem::to_string_hex (*system.nodes[0]->work_generate_blocking (key.pub)));
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -5264,6 +5594,7 @@ TEST (rpc, block_create_state_open)
 	ASSERT_EQ (badem::block_type::state, state_block->type ());
 	ASSERT_EQ (state_hash, state_block->hash ().to_string ());
 	ASSERT_TRUE (system.nodes[0]->latest (key.pub).is_zero ());
+	scoped_thread_name_io.reset ();
 	auto process_result (system.nodes[0]->process (*state_block));
 	ASSERT_EQ (badem::process_result::progress, process_result.code);
 	ASSERT_FALSE (system.nodes[0]->latest (key.pub).is_zero ());
@@ -5283,13 +5614,14 @@ TEST (rpc, block_create_state_request_work)
 		badem::keypair key;
 		badem::genesis genesis;
 		system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+		scoped_io_thread_name_change scoped_thread_name_io;
 		boost::property_tree::ptree request;
 		request.put ("action", "block_create");
 		request.put ("type", "state");
 		request.put ("wallet", system.nodes[0]->wallets.items.begin ()->first.to_string ());
 		request.put ("account", badem::test_genesis_key.pub.to_account ());
 		request.put ("representative", badem::test_genesis_key.pub.to_account ());
-		request.put ("balance", (badem::genesis_amount - badem::kBDM_ratio).convert_to<std::string> ());
+		request.put ("balance", (badem::genesis_amount - badem::Gbdm_ratio).convert_to<std::string> ());
 		request.put ("link", key.pub.to_account ());
 		request.put ("previous", previous);
 		auto node = system.nodes.front ();
@@ -5322,7 +5654,8 @@ TEST (rpc, block_hash)
 	badem::keypair key;
 	auto latest (system.nodes[0]->latest (badem::test_genesis_key.pub));
 	auto & node1 (*system.nodes[0]);
-	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (latest));
+	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (latest));
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -5351,6 +5684,7 @@ TEST (rpc, wallet_lock)
 	badem::system system (24000, 1);
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
 	badem::rpc_config rpc_config (true);
@@ -5383,6 +5717,7 @@ TEST (rpc, wallet_locked)
 {
 	badem::system system (24000, 1);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -5419,10 +5754,10 @@ TEST (rpc, wallet_create_fail)
 	// lmdb_max_dbs should be removed once the wallet store is refactored to support more wallets.
 	for (int i = 0; i < 127; i++)
 	{
-		badem::keypair key;
-		node->wallets.create (key.pub);
+		node->wallets.create (badem::random_wallet_id ());
 	}
 	rpc.start ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	boost::property_tree::ptree request;
 	request.put ("action", "wallet_create");
 	test_response response (request, rpc.config.port, system.io_ctx);
@@ -5442,11 +5777,12 @@ TEST (rpc, wallet_ledger)
 	system.wallet (0)->insert_adhoc (key.prv);
 	auto & node1 (*system.nodes[0]);
 	auto latest (system.nodes[0]->latest (badem::test_genesis_key.pub));
-	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, node1.work_generate_blocking (latest));
+	badem::send_block send (latest, key.pub, 100, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *node1.work_generate_blocking (latest));
 	system.nodes[0]->process (send);
-	badem::open_block open (send.hash (), badem::test_genesis_key.pub, key.pub, key.prv, key.pub, node1.work_generate_blocking (key.pub));
+	badem::open_block open (send.hash (), badem::test_genesis_key.pub, key.pub, key.prv, key.pub, *node1.work_generate_blocking (key.pub));
 	ASSERT_EQ (badem::process_result::progress, node1.process (open).code);
 	auto time (badem::seconds_since_epoch ());
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -5515,6 +5851,7 @@ TEST (rpc, wallet_add_watch)
 {
 	badem::system system (24000, 1);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -5542,6 +5879,23 @@ TEST (rpc, wallet_add_watch)
 	std::string success (response.json.get<std::string> ("success"));
 	ASSERT_TRUE (success.empty ());
 	ASSERT_TRUE (system.wallet (0)->exists (badem::test_genesis_key.pub));
+
+	// Make sure using special wallet key as pubkey fails
+	badem::public_key bad_key (1);
+	entry.put ("", bad_key.to_account ());
+	peers_l.push_back (std::make_pair ("", entry));
+	request.erase ("accounts");
+	request.add_child ("accounts", peers_l);
+
+	test_response response_error (request, rpc.config.port, system.io_ctx);
+	system.deadline_set (5s);
+	while (response_error.status == 0)
+	{
+		ASSERT_NO_ERROR (system.poll ());
+	}
+	ASSERT_EQ (200, response_error.status);
+	std::error_code ec (badem::error_common::bad_public_key);
+	ASSERT_EQ (response_error.json.get<std::string> ("error"), ec.message ());
 }
 
 TEST (rpc, online_reps)
@@ -5550,8 +5904,9 @@ TEST (rpc, online_reps)
 	badem::keypair key;
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	ASSERT_TRUE (system.nodes[1]->online_reps.online_stake () == system.nodes[1]->config.online_weight_minimum.number ());
-	auto send_block (system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, badem::kBDM_ratio));
+	auto send_block (system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, badem::Gbdm_ratio));
 	ASSERT_NE (nullptr, send_block);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	system.deadline_set (10s);
 	while (system.nodes[1]->online_reps.list ().empty ())
 	{
@@ -5599,22 +5954,28 @@ TEST (rpc, online_reps)
 	auto weight2 (item2->second.get<std::string> ("weight"));
 	ASSERT_EQ (system.nodes[1]->weight (badem::test_genesis_key.pub).convert_to<std::string> (), weight2);
 	//Test accounts filter
+	scoped_thread_name_io.reset ();
 	auto new_rep (system.wallet (1)->deterministic_insert ());
 	auto send (system.wallet (0)->send_action (badem::test_genesis_key.pub, new_rep, system.nodes[0]->config.receive_minimum.number ()));
+	scoped_thread_name_io.renew ();
 	ASSERT_NE (nullptr, send);
 	system.deadline_set (5s);
 	while (system.nodes[1]->block (send->hash ()) == nullptr)
 	{
 		ASSERT_NO_ERROR (system.poll ());
 	}
+	scoped_thread_name_io.reset ();
 	auto receive (system.wallet (1)->receive_action (*send, new_rep, system.nodes[0]->config.receive_minimum.number ()));
+	scoped_thread_name_io.renew ();
 	ASSERT_NE (nullptr, receive);
 	system.deadline_set (5s);
 	while (system.nodes[1]->block (receive->hash ()) == nullptr)
 	{
 		ASSERT_NO_ERROR (system.poll ());
 	}
+	scoped_thread_name_io.reset ();
 	auto change (system.wallet (0)->change_action (badem::test_genesis_key.pub, new_rep));
+	scoped_thread_name_io.renew ();
 	ASSERT_NE (nullptr, change);
 	system.deadline_set (5s);
 	while (system.nodes[1]->block (change->hash ()) == nullptr)
@@ -5650,9 +6011,9 @@ TEST (rpc, confirmation_height_currently_processing)
 {
 	// The chains should be longer than the	batch_write_size to test the amount of blocks confirmed is correct.
 	badem::system system;
-	badem::node_flags node_flags;
-	node_flags.delay_frontier_confirmation_height_updating = true;
-	auto node = system.add_node (badem::node_config (24000, system.logging), node_flags);
+	badem::node_config node_config (24000, system.logging);
+	node_config.frontiers_confirmation = badem::frontiers_confirmation_mode::disabled;
+	auto node = system.add_node (node_config);
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 
 	// Do enough blocks to reliably call RPC before the confirmation height has finished
@@ -5662,16 +6023,18 @@ TEST (rpc, confirmation_height_currently_processing)
 		auto transaction = node->store.tx_begin_write ();
 		for (auto i = num_blocks; i > 0; --i)
 		{
-			badem::send_block send (previous_genesis_chain_hash, badem::genesis_account, badem::genesis_amount - badem::kBDM_ratio + i + 1, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (previous_genesis_chain_hash));
+			badem::send_block send (previous_genesis_chain_hash, badem::genesis_account, badem::genesis_amount - badem::Gbdm_ratio + i + 1, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (previous_genesis_chain_hash));
 			ASSERT_EQ (badem::process_result::progress, node->ledger.process (transaction, send).code);
 			previous_genesis_chain_hash = send.hash ();
 		}
 
 		badem::keypair key1;
-		badem::send_block send (previous_genesis_chain_hash, key1.pub, badem::genesis_amount - badem::kBDM_ratio - 1, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (previous_genesis_chain_hash));
+		badem::send_block send (previous_genesis_chain_hash, key1.pub, badem::genesis_amount - badem::Gbdm_ratio - 1, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (previous_genesis_chain_hash));
 		ASSERT_EQ (badem::process_result::progress, node->ledger.process (transaction, send).code);
 		previous_genesis_chain_hash = send.hash ();
 	}
+
+	scoped_io_thread_name_change scoped_thread_name_io;
 
 	std::shared_ptr<badem::block> frontier;
 	{
@@ -5745,7 +6108,8 @@ TEST (rpc, confirmation_history)
 	badem::keypair key;
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	ASSERT_TRUE (system.nodes[0]->active.list_confirmed ().empty ());
-	auto block (system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, badem::kBDM_ratio));
+	auto block (system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, badem::Gbdm_ratio));
+	scoped_io_thread_name_change scoped_thread_name_io;
 	system.deadline_set (10s);
 	while (system.nodes[0]->active.list_confirmed ().empty ())
 	{
@@ -5773,12 +6137,13 @@ TEST (rpc, confirmation_history)
 	ASSERT_NE (representatives.end (), item);
 	auto hash (item->second.get<std::string> ("hash"));
 	auto tally (item->second.get<std::string> ("tally"));
-	ASSERT_FALSE (item->second.get<std::string> ("duration", "").empty ());
-	ASSERT_FALSE (item->second.get<std::string> ("time", "").empty ());
+	ASSERT_EQ (1, item->second.count ("duration"));
+	ASSERT_EQ (1, item->second.count ("time"));
+	ASSERT_EQ (1, item->second.count ("request_count"));
 	ASSERT_EQ (block->hash ().to_string (), hash);
 	badem::amount tally_num;
 	tally_num.decode_dec (tally);
-	assert (tally_num == badem::genesis_amount || tally_num == (badem::genesis_amount - badem::kBDM_ratio));
+	assert (tally_num == badem::genesis_amount || tally_num == (badem::genesis_amount - badem::Gbdm_ratio));
 	system.stop ();
 }
 
@@ -5788,9 +6153,10 @@ TEST (rpc, confirmation_history_hash)
 	badem::keypair key;
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	ASSERT_TRUE (system.nodes[0]->active.list_confirmed ().empty ());
-	auto send1 (system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, badem::kBDM_ratio));
-	auto send2 (system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, badem::kBDM_ratio));
-	auto send3 (system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, badem::kBDM_ratio));
+	auto send1 (system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, badem::Gbdm_ratio));
+	auto send2 (system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, badem::Gbdm_ratio));
+	auto send3 (system.wallet (0)->send_action (badem::test_genesis_key.pub, key.pub, badem::Gbdm_ratio));
+	scoped_io_thread_name_change scoped_thread_name_io;
 	system.deadline_set (10s);
 	while (system.nodes[0]->active.list_confirmed ().size () != 3)
 	{
@@ -5825,7 +6191,7 @@ TEST (rpc, confirmation_history_hash)
 	ASSERT_EQ (send2->hash ().to_string (), hash);
 	badem::amount tally_num;
 	tally_num.decode_dec (tally);
-	assert (tally_num == badem::genesis_amount || tally_num == (badem::genesis_amount - badem::kBDM_ratio) || tally_num == (badem::genesis_amount - 2 * badem::kBDM_ratio) || tally_num == (badem::genesis_amount - 3 * badem::kBDM_ratio));
+	assert (tally_num == badem::genesis_amount || tally_num == (badem::genesis_amount - badem::Gbdm_ratio) || tally_num == (badem::genesis_amount - 2 * badem::Gbdm_ratio) || tally_num == (badem::genesis_amount - 3 * badem::Gbdm_ratio));
 	system.stop ();
 }
 
@@ -5834,11 +6200,12 @@ TEST (rpc, block_confirm)
 	badem::system system (24000, 1);
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	badem::genesis genesis;
-	auto send1 (std::make_shared<badem::state_block> (badem::test_genesis_key.pub, genesis.hash (), badem::test_genesis_key.pub, badem::genesis_amount - badem::kBDM_ratio, badem::test_genesis_key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.nodes[0]->work_generate_blocking (genesis.hash ())));
+	auto send1 (std::make_shared<badem::state_block> (badem::test_genesis_key.pub, genesis.hash (), badem::test_genesis_key.pub, badem::genesis_amount - badem::Gbdm_ratio, badem::test_genesis_key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.nodes[0]->work_generate_blocking (genesis.hash ())));
 	{
 		auto transaction (system.nodes[0]->store.tx_begin_write ());
 		ASSERT_EQ (badem::process_result::progress, system.nodes[0]->ledger.process (transaction, *send1).code);
 	}
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
@@ -5865,6 +6232,7 @@ TEST (rpc, block_confirm_absent)
 	badem::system system (24000, 1);
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -5888,7 +6256,6 @@ TEST (rpc, block_confirm_absent)
 TEST (rpc, block_confirm_confirmed)
 {
 	badem::system system (24000, 1);
-	badem::node_init init;
 	auto path (badem::unique_path ());
 	badem::node_config config;
 	config.peering_port = 24001;
@@ -5896,7 +6263,7 @@ TEST (rpc, block_confirm_confirmed)
 	config.callback_port = 24002;
 	config.callback_target = "/";
 	config.logging.init (path);
-	auto node (std::make_shared<badem::node> (init, system.io_ctx, path, system.alarm, config, system.work));
+	auto node (std::make_shared<badem::node> (system.io_ctx, path, system.alarm, config, system.work));
 	node->start ();
 	system.nodes.push_back (node);
 	badem::genesis genesis;
@@ -5905,7 +6272,7 @@ TEST (rpc, block_confirm_confirmed)
 		ASSERT_TRUE (node->ledger.block_confirmed (transaction, genesis.hash ()));
 	}
 	ASSERT_EQ (0, node->stats.count (badem::stat::type::error, badem::stat::detail::http_callback, badem::stat::dir::out));
-
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -5943,6 +6310,7 @@ TEST (rpc, node_id)
 {
 	badem::system system (24000, 1);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -5969,6 +6337,7 @@ TEST (rpc, stats_clear)
 	badem::system system (24000, 1);
 	badem::keypair key;
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -5992,6 +6361,101 @@ TEST (rpc, stats_clear)
 	ASSERT_LE (system.nodes[0]->stats.last_reset ().count (), 5);
 }
 
+TEST (rpc, unchecked)
+{
+	badem::system system (24000, 1);
+	badem::keypair key;
+	auto & node (*system.nodes[0]);
+	enable_ipc_transport_tcp (node.config.ipc_config.transport_tcp);
+	badem::node_rpc_config node_rpc_config;
+	badem::ipc::ipc_server ipc_server (node, node_rpc_config);
+	badem::rpc_config rpc_config (true);
+	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
+	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
+	rpc.start ();
+	auto open (std::make_shared<badem::state_block> (key.pub, 0, key.pub, 1, key.pub, key.prv, key.pub, *system.work.generate (key.pub)));
+	auto open2 (std::make_shared<badem::state_block> (key.pub, 0, key.pub, 2, key.pub, key.prv, key.pub, *system.work.generate (key.pub)));
+	node.process_active (open);
+	node.process_active (open2);
+	node.block_processor.flush ();
+	boost::property_tree::ptree request;
+	request.put ("action", "unchecked");
+	request.put ("count", 2);
+	{
+		test_response response (request, rpc.config.port, system.io_ctx);
+		system.deadline_set (5s);
+		while (response.status == 0)
+		{
+			ASSERT_NO_ERROR (system.poll ());
+		}
+		ASSERT_EQ (200, response.status);
+		auto & blocks (response.json.get_child ("blocks"));
+		ASSERT_EQ (2, blocks.size ());
+		ASSERT_EQ (1, blocks.count (open->hash ().to_string ()));
+		ASSERT_EQ (1, blocks.count (open2->hash ().to_string ()));
+	}
+	request.put ("json_block", true);
+	{
+		test_response response (request, rpc.config.port, system.io_ctx);
+		system.deadline_set (5s);
+		while (response.status == 0)
+		{
+			ASSERT_NO_ERROR (system.poll ());
+		}
+		ASSERT_EQ (200, response.status);
+		auto & blocks (response.json.get_child ("blocks"));
+		ASSERT_EQ (2, blocks.size ());
+		auto & open_block (blocks.get_child (open->hash ().to_string ()));
+		ASSERT_EQ ("state", open_block.get<std::string> ("type"));
+	}
+}
+
+TEST (rpc, unchecked_get)
+{
+	badem::system system (24000, 1);
+	badem::keypair key;
+	auto & node (*system.nodes[0]);
+	enable_ipc_transport_tcp (node.config.ipc_config.transport_tcp);
+	badem::node_rpc_config node_rpc_config;
+	badem::ipc::ipc_server ipc_server (node, node_rpc_config);
+	badem::rpc_config rpc_config (true);
+	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
+	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
+	rpc.start ();
+	auto open (std::make_shared<badem::state_block> (key.pub, 0, key.pub, 1, key.pub, key.prv, key.pub, *system.work.generate (key.pub)));
+	node.process_active (open);
+	node.block_processor.flush ();
+	boost::property_tree::ptree request;
+	request.put ("action", "unchecked_get");
+	request.put ("hash", open->hash ().to_string ());
+	{
+		test_response response (request, rpc.config.port, system.io_ctx);
+		system.deadline_set (5s);
+		while (response.status == 0)
+		{
+			ASSERT_NO_ERROR (system.poll ());
+		}
+		ASSERT_EQ (200, response.status);
+		ASSERT_EQ (1, response.json.count ("contents"));
+		auto timestamp (response.json.get<uint64_t> ("modified_timestamp"));
+		ASSERT_LE (timestamp, badem::seconds_since_epoch ());
+	}
+	request.put ("json_block", true);
+	{
+		test_response response (request, rpc.config.port, system.io_ctx);
+		system.deadline_set (5s);
+		while (response.status == 0)
+		{
+			ASSERT_NO_ERROR (system.poll ());
+		}
+		ASSERT_EQ (200, response.status);
+		auto & contents (response.json.get_child ("contents"));
+		ASSERT_EQ ("state", contents.get<std::string> ("type"));
+		auto timestamp (response.json.get<uint64_t> ("modified_timestamp"));
+		ASSERT_LE (timestamp, badem::seconds_since_epoch ());
+	}
+}
+
 TEST (rpc, unopened)
 {
 	badem::system system (24000, 1);
@@ -6004,6 +6468,7 @@ TEST (rpc, unopened)
 	auto send2 (system.wallet (0)->send_action (badem::test_genesis_key.pub, account2, 10));
 	ASSERT_NE (nullptr, send2);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -6100,6 +6565,7 @@ TEST (rpc, unopened_burn)
 	auto send (system.wallet (0)->send_action (badem::test_genesis_key.pub, badem::burn_account, 1));
 	ASSERT_NE (nullptr, send);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -6124,6 +6590,7 @@ TEST (rpc, unopened_no_accounts)
 {
 	badem::system system (24000, 1);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -6148,6 +6615,7 @@ TEST (rpc, uptime)
 {
 	badem::system system (24000, 1);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -6188,6 +6656,7 @@ TEST (rpc, wallet_history)
 	ASSERT_NE (nullptr, send2);
 	system.deadline_set (10s);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -6243,7 +6712,8 @@ TEST (rpc, sign_hash)
 	badem::system system (24000, 1);
 	badem::keypair key;
 	auto & node1 (*system.nodes[0]);
-	badem::state_block send (badem::genesis_account, node1.latest (badem::test_genesis_key.pub), badem::genesis_account, badem::genesis_amount - badem::kBDM_ratio, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, 0);
+	badem::state_block send (badem::genesis_account, node1.latest (badem::test_genesis_key.pub), badem::genesis_account, badem::genesis_amount - badem::Gbdm_ratio, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, 0);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -6280,8 +6750,10 @@ TEST (rpc, sign_block)
 {
 	badem::system system (24000, 1);
 	badem::keypair key;
+	system.wallet (0)->insert_adhoc (key.prv);
 	auto & node1 (*system.nodes[0]);
-	badem::state_block send (badem::genesis_account, node1.latest (badem::test_genesis_key.pub), badem::genesis_account, badem::genesis_amount - badem::kBDM_ratio, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, 0);
+	badem::state_block send (badem::genesis_account, node1.latest (badem::test_genesis_key.pub), badem::genesis_account, badem::genesis_amount - badem::Gbdm_ratio, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, 0);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node1.config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (node1, node_rpc_config);
@@ -6291,7 +6763,6 @@ TEST (rpc, sign_block)
 	rpc.start ();
 	boost::property_tree::ptree request;
 	request.put ("action", "sign");
-	system.wallet (0)->insert_adhoc (key.prv);
 	std::string wallet;
 	system.nodes[0]->wallets.items.begin ()->first.encode_hex (wallet);
 	request.put ("wallet", wallet);
@@ -6319,6 +6790,7 @@ TEST (rpc, memory_stats)
 {
 	badem::system system (24000, 1);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -6352,6 +6824,7 @@ TEST (rpc, block_confirmed)
 {
 	badem::system system (24000, 1);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -6381,6 +6854,7 @@ TEST (rpc, block_confirmed)
 	ASSERT_EQ (200, response1.status);
 	ASSERT_EQ (std::error_code (badem::error_blocks::not_found).message (), response1.json.get<std::string> ("error"));
 
+	scoped_thread_name_io.reset ();
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	badem::keypair key;
 	system.wallet (0)->insert_adhoc (key.prv);
@@ -6389,12 +6863,13 @@ TEST (rpc, block_confirmed)
 	{
 		auto transaction = node->store.tx_begin_write ();
 		badem::block_hash latest (node->latest (badem::test_genesis_key.pub));
-		badem::send_block send1 (latest, key.pub, 300, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (latest));
+		badem::send_block send1 (latest, key.pub, 300, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (latest));
 		ASSERT_EQ (badem::process_result::progress, node->ledger.process (transaction, send1).code);
 
-		badem::open_block open1 (send1.hash (), badem::genesis_account, key.pub, key.prv, key.pub, system.work.generate (key.pub));
+		badem::open_block open1 (send1.hash (), badem::genesis_account, key.pub, key.prv, key.pub, *system.work.generate (key.pub));
 		ASSERT_EQ (badem::process_result::progress, node->ledger.process (transaction, open1).code);
 	}
+	scoped_thread_name_io.renew ();
 
 	// This should not be confirmed
 	badem::block_hash latest (node->latest (badem::test_genesis_key.pub));
@@ -6410,14 +6885,9 @@ TEST (rpc, block_confirmed)
 	ASSERT_FALSE (response2.json.get<bool> ("confirmed"));
 
 	// Create and process a new send block
-	auto send = std::make_shared<badem::send_block> (latest, key.pub, 10, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (latest));
+	auto send = std::make_shared<badem::send_block> (latest, key.pub, 10, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (latest));
 	node->process_active (send);
 	node->block_processor.flush ();
-	system.deadline_set (10s);
-	while (!node->pending_confirmation_height.is_processing_block (send->hash ()))
-	{
-		ASSERT_NO_ERROR (system.poll ());
-	}
 
 	// Wait until the confirmation height has been set
 	system.deadline_set (10s);
@@ -6448,12 +6918,14 @@ TEST (rpc, block_confirmed)
 	ASSERT_TRUE (response3.json.get<bool> ("confirmed"));
 }
 
+#if !BADEM_ROCKSDB
 TEST (rpc, database_txn_tracker)
 {
 	// First try when database tracking is disabled
 	{
 		badem::system system (24000, 1);
 		auto node = system.nodes.front ();
+		scoped_io_thread_name_change scoped_thread_name_io;
 		enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 		badem::node_rpc_config node_rpc_config;
 		badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -6482,6 +6954,7 @@ TEST (rpc, database_txn_tracker)
 	badem::node_config node_config (24000, system.logging);
 	node_config.diagnostics_config.txn_tracking.enable = true;
 	auto node = system.add_node (node_config);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -6573,11 +7046,13 @@ TEST (rpc, database_txn_tracker)
 	ASSERT_TRUE (!std::get<3> (json_l.front ()).empty ());
 	thread.join ();
 }
+#endif
 
 TEST (rpc, active_difficulty)
 {
 	badem::system system (24000, 1);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::node_rpc_config node_rpc_config;
 	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
@@ -6587,7 +7062,7 @@ TEST (rpc, active_difficulty)
 	rpc.start ();
 	boost::property_tree::ptree request;
 	request.put ("action", "active_difficulty");
-	std::unique_lock<std::mutex> lock (node->active.mutex);
+	badem::unique_lock<std::mutex> lock (node->active.mutex);
 	node->active.multipliers_cb.push_front (1.5);
 	node->active.multipliers_cb.push_front (4.2);
 	// Also pushes 1.0 to the front of multipliers_cb
@@ -6650,6 +7125,7 @@ TEST (rpc, simultaneous_calls)
 {
 	// This tests simulatenous calls to the same node in different threads
 	badem::system system (24000, 1);
+	scoped_io_thread_name_change scoped_thread_name_io;
 	auto node = system.nodes.front ();
 	badem::thread_runner runner (system.io_ctx, node->config.io_threads);
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
@@ -6713,6 +7189,7 @@ TEST (rpc, in_process)
 {
 	badem::system system (24000, 1);
 	auto node = system.nodes.front ();
+	scoped_io_thread_name_change scoped_thread_name_io;
 	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
 	badem::rpc_config rpc_config (true);
 	badem::node_rpc_config node_rpc_config;
@@ -6772,7 +7249,7 @@ TEST (rpc_config, serialization)
 TEST (rpc_config, migrate)
 {
 	badem::jsonconfig rpc;
-	rpc.put ("address", "::ffff:0.0.0.0");
+	rpc.put ("address", "::1");
 	rpc.put ("port", 11111);
 
 	bool updated = false;
@@ -6831,4 +7308,173 @@ TEST (rpc, deprecated_account_format)
 	ASSERT_EQ (genesis.hash ().to_string (), frontier);
 	boost::optional<std::string> deprecated_account_format2 (response2.json.get_optional<std::string> ("deprecated_account_format"));
 	ASSERT_TRUE (deprecated_account_format2.is_initialized ());
+}
+
+TEST (rpc, epoch_upgrade)
+{
+	badem::system system (24000, 1);
+	auto node = system.nodes.front ();
+	badem::keypair key1, key2, key3;
+	badem::genesis genesis;
+	badem::keypair epoch_signer (badem::test_genesis_key);
+	auto send1 (std::make_shared<badem::state_block> (badem::test_genesis_key.pub, genesis.hash (), badem::test_genesis_key.pub, badem::genesis_amount - 1, key1.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (genesis.hash ()))); // to opened account
+	ASSERT_EQ (badem::process_result::progress, node->process (*send1).code);
+	auto send2 (std::make_shared<badem::state_block> (badem::test_genesis_key.pub, send1->hash (), badem::test_genesis_key.pub, badem::genesis_amount - 2, key2.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (send1->hash ()))); // to unopened account (pending)
+	ASSERT_EQ (badem::process_result::progress, node->process (*send2).code);
+	auto send3 (std::make_shared<badem::state_block> (badem::test_genesis_key.pub, send2->hash (), badem::test_genesis_key.pub, badem::genesis_amount - 3, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (send2->hash ()))); // to burn (0)
+	ASSERT_EQ (badem::process_result::progress, node->process (*send3).code);
+	badem::account max_account (std::numeric_limits<badem::uint256_t>::max ());
+	auto send4 (std::make_shared<badem::state_block> (badem::test_genesis_key.pub, send3->hash (), badem::test_genesis_key.pub, badem::genesis_amount - 4, max_account, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (send3->hash ()))); // to max account
+	ASSERT_EQ (badem::process_result::progress, node->process (*send4).code);
+	auto open (std::make_shared<badem::state_block> (key1.pub, 0, key1.pub, 1, send1->hash (), key1.prv, key1.pub, *system.work.generate (key1.pub)));
+	ASSERT_EQ (badem::process_result::progress, node->process (*open).code);
+	// Check accounts epochs
+	{
+		auto transaction (node->store.tx_begin_read ());
+		ASSERT_EQ (2, node->store.account_count (transaction));
+		for (auto i (node->store.latest_begin (transaction)); i != node->store.latest_end (); ++i)
+		{
+			badem::account_info info (i->second);
+			ASSERT_EQ (info.epoch (), badem::epoch::epoch_0);
+		}
+	}
+	enable_ipc_transport_tcp (node->config.ipc_config.transport_tcp);
+	badem::node_rpc_config node_rpc_config;
+	badem::ipc::ipc_server ipc_server (*node, node_rpc_config);
+	badem::rpc_config rpc_config (true);
+	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
+	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
+	rpc.start ();
+	boost::property_tree::ptree request;
+	request.put ("action", "epoch_upgrade");
+	request.put ("epoch", 1);
+	request.put ("key", epoch_signer.prv.data.to_string ());
+	test_response response (request, rpc.config.port, system.io_ctx);
+	system.deadline_set (5s);
+	while (response.status == 0)
+	{
+		ASSERT_NO_ERROR (system.poll ());
+	}
+	ASSERT_EQ (200, response.status);
+	ASSERT_EQ ("1", response.json.get<std::string> ("started"));
+	system.deadline_set (5s);
+	bool done (false);
+	while (!done)
+	{
+		auto transaction (node->store.tx_begin_read ());
+		done = (4 == node->store.account_count (transaction));
+		ASSERT_NO_ERROR (system.poll ());
+	}
+	// Check upgrade
+	{
+		auto transaction (node->store.tx_begin_read ());
+		ASSERT_EQ (4, node->store.account_count (transaction));
+		for (auto i (node->store.latest_begin (transaction)); i != node->store.latest_end (); ++i)
+		{
+			badem::account_info info (i->second);
+			ASSERT_EQ (info.epoch (), badem::epoch::epoch_1);
+		}
+		ASSERT_TRUE (node->store.account_exists (transaction, key1.pub));
+		ASSERT_TRUE (node->store.account_exists (transaction, key2.pub));
+		ASSERT_TRUE (node->store.account_exists (transaction, std::numeric_limits<badem::uint256_t>::max ()));
+		ASSERT_FALSE (node->store.account_exists (transaction, 0));
+	}
+
+	// Epoch 2 upgrade
+	auto genesis_latest (node->latest (badem::test_genesis_key.pub));
+	auto send5 (std::make_shared<badem::state_block> (badem::test_genesis_key.pub, genesis_latest, badem::test_genesis_key.pub, badem::genesis_amount - 5, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (genesis_latest))); // to burn (0)
+	ASSERT_EQ (badem::process_result::progress, node->process (*send5).code);
+	auto send6 (std::make_shared<badem::state_block> (badem::test_genesis_key.pub, send5->hash (), badem::test_genesis_key.pub, badem::genesis_amount - 6, key1.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (send5->hash ()))); // to key1 (again)
+	ASSERT_EQ (badem::process_result::progress, node->process (*send6).code);
+	auto key1_latest (node->latest (key1.pub));
+	auto send7 (std::make_shared<badem::state_block> (key1.pub, key1_latest, key1.pub, 0, key3.pub, key1.prv, key1.pub, *system.work.generate (key1_latest))); // to key3
+	ASSERT_EQ (badem::process_result::progress, node->process (*send7).code);
+	{
+		// Check pending entry
+		auto transaction (node->store.tx_begin_read ());
+		badem::pending_info info;
+		ASSERT_FALSE (node->store.pending_get (transaction, badem::pending_key (key3.pub, send7->hash ()), info));
+		ASSERT_EQ (badem::epoch::epoch_1, info.epoch);
+	}
+
+	request.put ("epoch", 2);
+	test_response response2 (request, rpc.config.port, system.io_ctx);
+	system.deadline_set (5s);
+	while (response2.status == 0)
+	{
+		ASSERT_NO_ERROR (system.poll ());
+	}
+	ASSERT_EQ (200, response2.status);
+	ASSERT_EQ ("1", response2.json.get<std::string> ("started"));
+	system.deadline_set (5s);
+	bool done2 (false);
+	while (!done2)
+	{
+		auto transaction (node->store.tx_begin_read ());
+		done2 = (5 == node->store.account_count (transaction));
+		ASSERT_NO_ERROR (system.poll ());
+	}
+	// Check upgrade
+	{
+		auto transaction (node->store.tx_begin_read ());
+		ASSERT_EQ (5, node->store.account_count (transaction));
+		for (auto i (node->store.latest_begin (transaction)); i != node->store.latest_end (); ++i)
+		{
+			badem::account_info info (i->second);
+			ASSERT_EQ (info.epoch (), badem::epoch::epoch_2);
+		}
+		ASSERT_TRUE (node->store.account_exists (transaction, key1.pub));
+		ASSERT_TRUE (node->store.account_exists (transaction, key2.pub));
+		ASSERT_TRUE (node->store.account_exists (transaction, key3.pub));
+		ASSERT_TRUE (node->store.account_exists (transaction, std::numeric_limits<badem::uint256_t>::max ()));
+		ASSERT_FALSE (node->store.account_exists (transaction, 0));
+	}
+}
+
+TEST (rpc, account_lazy_start)
+{
+	badem::system system;
+	badem::node_flags node_flags;
+	node_flags.disable_legacy_bootstrap = true;
+	auto node1 = system.add_node (badem::node_config (24000, system.logging), node_flags);
+	badem::genesis genesis;
+	badem::keypair key;
+	// Generating test chain
+	auto send1 (std::make_shared<badem::state_block> (badem::test_genesis_key.pub, genesis.hash (), badem::test_genesis_key.pub, badem::genesis_amount - badem::Gbdm_ratio, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (genesis.hash ())));
+	ASSERT_EQ (badem::process_result::progress, node1->process (*send1).code);
+	auto open (std::make_shared<badem::open_block> (send1->hash (), key.pub, key.pub, key.prv, key.pub, *system.work.generate (key.pub)));
+	ASSERT_EQ (badem::process_result::progress, node1->process (*open).code);
+
+	// Start lazy bootstrap with account
+	auto node2 = system.add_node (badem::node_config (24001, system.logging), node_flags);
+	node2->network.udp_channels.insert (node1->network.endpoint (), node1->network_params.protocol.protocol_version);
+	enable_ipc_transport_tcp (node2->config.ipc_config.transport_tcp);
+	badem::node_rpc_config node_rpc_config;
+	badem::ipc::ipc_server ipc_server (*node2, node_rpc_config);
+	badem::rpc_config rpc_config (true);
+	badem::ipc_rpc_processor ipc_rpc_processor (system.io_ctx, rpc_config);
+	badem::rpc rpc (system.io_ctx, rpc_config, ipc_rpc_processor);
+	rpc.start ();
+	boost::property_tree::ptree request;
+	request.put ("action", "account_info");
+	request.put ("account", key.pub.to_account ());
+	test_response response (request, rpc.config.port, system.io_ctx);
+	system.deadline_set (5s);
+	while (response.status == 0)
+	{
+		ASSERT_NO_ERROR (system.poll ());
+	}
+	ASSERT_EQ (200, response.status);
+	boost::optional<std::string> account_error (response.json.get_optional<std::string> ("error"));
+	ASSERT_TRUE (account_error.is_initialized ());
+
+	// Check processed blocks
+	system.deadline_set (10s);
+	while (node2->bootstrap_initiator.in_progress ())
+	{
+		ASSERT_NO_ERROR (system.poll ());
+	}
+	node2->block_processor.flush ();
+	ASSERT_TRUE (node2->ledger.block_exists (send1->hash ()));
+	ASSERT_TRUE (node2->ledger.block_exists (open->hash ()));
 }

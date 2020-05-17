@@ -6,6 +6,9 @@
 
 // Some builds (mac) fail due to "Boost.Stacktrace requires `_Unwind_Backtrace` function".
 #ifndef _WIN32
+#ifdef BADEM_STACKTRACE_BACKTRACE
+#define BOOST_STACKTRACE_USE_BACKTRACE
+#endif
 #ifndef _GNU_SOURCE
 #define BEFORE_GNU_SOURCE 0
 #define _GNU_SOURCE
@@ -53,10 +56,12 @@ seq_con_info_leaf::seq_con_info_leaf (const seq_con_info & info) :
 info (info)
 {
 }
+
 bool seq_con_info_leaf::is_composite () const
 {
 	return false;
 }
+
 const seq_con_info & seq_con_info_leaf::get_info () const
 {
 	return info;
@@ -65,6 +70,14 @@ const seq_con_info & seq_con_info_leaf::get_info () const
 void dump_crash_stacktrace ()
 {
 	boost::stacktrace::safe_dump_to ("badem_node_backtrace.dump");
+}
+
+std::string generate_stacktrace ()
+{
+	auto stacktrace = boost::stacktrace::stacktrace ();
+	std::stringstream ss;
+	ss << stacktrace;
+	return ss.str ();
 }
 
 namespace thread_role
@@ -133,6 +146,9 @@ namespace thread_role
 				break;
 			case badem::thread_role::name::confirmation_height_processing:
 				thread_role_name_string = "Conf height";
+				break;
+			case badem::thread_role::name::worker:
+				thread_role_name_string = "Worker";
 				break;
 		}
 
@@ -225,6 +241,107 @@ void badem::thread_runner::stop_event_processing ()
 	io_guard.get_executor ().context ().stop ();
 }
 
+badem::worker::worker () :
+thread ([this]() {
+	badem::thread_role::set (badem::thread_role::name::worker);
+	this->run ();
+})
+{
+}
+
+void badem::worker::run ()
+{
+	badem::unique_lock<std::mutex> lk (mutex);
+	while (!stopped)
+	{
+		if (!queue.empty ())
+		{
+			auto func = queue.front ();
+			queue.pop_front ();
+			lk.unlock ();
+			func ();
+			// So that we reduce locking for anything being pushed as that will
+			// most likely be on an io-thread
+			std::this_thread::yield ();
+			lk.lock ();
+		}
+		else
+		{
+			cv.wait (lk);
+		}
+	}
+}
+
+badem::worker::~worker ()
+{
+	stop ();
+}
+
+void badem::worker::push_task (std::function<void()> func_a)
+{
+	{
+		badem::lock_guard<std::mutex> guard (mutex);
+		if (!stopped)
+		{
+			queue.emplace_back (func_a);
+		}
+	}
+
+	cv.notify_one ();
+}
+
+void badem::worker::stop ()
+{
+	{
+		badem::unique_lock<std::mutex> lk (mutex);
+		stopped = true;
+		queue.clear ();
+	}
+	cv.notify_one ();
+	if (thread.joinable ())
+	{
+		thread.join ();
+	}
+}
+
+std::unique_ptr<badem::seq_con_info_component> badem::collect_seq_con_info (badem::worker & worker, const std::string & name)
+{
+	auto composite = std::make_unique<seq_con_info_composite> (name);
+
+	size_t count = 0;
+	{
+		badem::lock_guard<std::mutex> guard (worker.mutex);
+		count = worker.queue.size ();
+	}
+	auto sizeof_element = sizeof (decltype (worker.queue)::value_type);
+	composite->add_component (std::make_unique<badem::seq_con_info_leaf> (badem::seq_con_info{ "queue", count, sizeof_element }));
+	return composite;
+}
+
+void badem::remove_all_files_in_dir (boost::filesystem::path const & dir)
+{
+	for (auto & p : boost::filesystem::directory_iterator (dir))
+	{
+		auto path = p.path ();
+		if (boost::filesystem::is_regular_file (path))
+		{
+			boost::filesystem::remove (path);
+		}
+	}
+}
+
+void badem::move_all_files_to_dir (boost::filesystem::path const & from, boost::filesystem::path const & to)
+{
+	for (auto & p : boost::filesystem::directory_iterator (from))
+	{
+		auto path = p.path ();
+		if (boost::filesystem::is_regular_file (path))
+		{
+			boost::filesystem::rename (path, to / path.filename ());
+		}
+	}
+}
+
 /*
  * Backing code for "release_assert", which is itself a macro
  */
@@ -238,10 +355,7 @@ void release_assert_internal (bool check, const char * check_expr, const char * 
 	std::cerr << "Assertion (" << check_expr << ") failed " << file << ":" << line << "\n\n";
 
 	// Output stack trace to cerr
-	auto stacktrace = boost::stacktrace::stacktrace ();
-	std::stringstream ss;
-	ss << stacktrace;
-	auto backtrace_str = ss.str ();
+	auto backtrace_str = badem::generate_stacktrace ();
 	std::cerr << backtrace_str << std::endl;
 
 	// "abort" at the end of this function will go into any signal handlers (the daemon ones will generate a stack trace and load memory address files on non-Windows systems).

@@ -30,7 +30,7 @@ TEST (system, generate_mass_activity_long)
 	badem::node_config node_config (24000, system.logging);
 	node_config.enable_voting = false; // Prevent blocks cementing
 	auto node = system.add_node (node_config);
-	system.wallet (0)->wallets.watcher.stop (); // Stop work watcher
+	system.wallet (0)->wallets.watcher->stop (); // Stop work watcher
 	badem::thread_runner runner (system.io_ctx, system.nodes[0]->config.io_threads);
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	uint32_t count (1000000000);
@@ -56,10 +56,9 @@ TEST (system, receive_while_synchronizing)
 		uint32_t count (1000);
 		system.generate_mass_activity (count, *system.nodes[0]);
 		badem::keypair key;
-		badem::node_init init1;
-		auto node1 (std::make_shared<badem::node> (init1, system.io_ctx, 24001, badem::unique_path (), system.alarm, system.logging, system.work));
-		ASSERT_FALSE (init1.error ());
-		auto channel (std::make_shared<badem::transport::channel_udp> (node1->network.udp_channels, system.nodes[0]->network.endpoint ()));
+		auto node1 (std::make_shared<badem::node> (system.io_ctx, 24001, badem::unique_path (), system.alarm, system.logging, system.work));
+		ASSERT_FALSE (node1->init_error ());
+		auto channel (std::make_shared<badem::transport::channel_udp> (node1->network.udp_channels, system.nodes[0]->network.endpoint (), node1->network_params.protocol.protocol_version));
 		node1->network.send_keepalive (channel);
 		auto wallet (node1->wallets.create (1));
 		wallet->insert_adhoc (badem::test_genesis_key.prv); // For voting
@@ -90,30 +89,29 @@ TEST (system, receive_while_synchronizing)
 TEST (ledger, deep_account_compute)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_FALSE (init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_FALSE (store->init_error ());
 	badem::stat stats;
 	badem::ledger ledger (*store, stats);
 	badem::genesis genesis;
 	auto transaction (store->tx_begin_write ());
-	store->initialize (transaction, genesis);
+	store->initialize (transaction, genesis, ledger.rep_weights, ledger.cemented_count, ledger.block_count_cache);
 	badem::work_pool pool (std::numeric_limits<unsigned>::max ());
 	badem::keypair key;
 	auto balance (badem::genesis_amount - 1);
-	badem::send_block send (genesis.hash (), key.pub, balance, badem::test_genesis_key.prv, badem::test_genesis_key.pub, pool.generate (genesis.hash ()));
+	badem::send_block send (genesis.hash (), key.pub, balance, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (genesis.hash ()));
 	ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, send).code);
-	badem::open_block open (send.hash (), badem::test_genesis_key.pub, key.pub, key.prv, key.pub, pool.generate (key.pub));
+	badem::open_block open (send.hash (), badem::test_genesis_key.pub, key.pub, key.prv, key.pub, *pool.generate (key.pub));
 	ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, open).code);
 	auto sprevious (send.hash ());
 	auto rprevious (open.hash ());
 	for (auto i (0), n (100000); i != n; ++i)
 	{
 		balance -= 1;
-		badem::send_block send (sprevious, key.pub, balance, badem::test_genesis_key.prv, badem::test_genesis_key.pub, pool.generate (sprevious));
+		badem::send_block send (sprevious, key.pub, balance, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (sprevious));
 		ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, send).code);
 		sprevious = send.hash ();
-		badem::receive_block receive (rprevious, send.hash (), key.prv, key.pub, pool.generate (rprevious));
+		badem::receive_block receive (rprevious, send.hash (), key.prv, key.pub, *pool.generate (rprevious));
 		ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, receive).code);
 		rprevious = receive.hash ();
 		if (i % 100 == 0)
@@ -170,10 +168,10 @@ TEST (store, load)
 				auto transaction (system.nodes[0]->store.tx_begin_write ());
 				for (auto j (0); j != 10; ++j)
 				{
-					badem::block_hash hash;
-					badem::random_pool::generate_block (hash.bytes.data (), hash.bytes.size ());
-					system.nodes[0]->store.confirmation_height_put (transaction, hash, 0);
-					system.nodes[0]->store.account_put (transaction, hash, badem::account_info ());
+					badem::account account;
+					badem::random_pool::generate_block (account.bytes.data (), account.bytes.size ());
+					system.nodes[0]->store.confirmation_height_put (transaction, account, 0);
+					system.nodes[0]->store.account_put (transaction, account, badem::account_info ());
 				}
 			}
 		}));
@@ -226,7 +224,7 @@ TEST (node, fork_storm)
 			}
 			else
 			{
-				std::lock_guard<std::mutex> lock (node_a->active.mutex);
+				badem::lock_guard<std::mutex> lock (node_a->active.mutex);
 				if (node_a->active.roots.begin ()->election->last_votes_size () == 1)
 				{
 					++single;
@@ -320,7 +318,7 @@ TEST (broadcast, world_broadcast_simulate)
 
 TEST (broadcast, sqrt_broadcast_simulate)
 {
-	auto node_count (200);
+	auto node_count (10000);
 	auto broadcast_count (std::ceil (std::sqrt (node_count)));
 	// 0 = starting state
 	// 1 = heard transaction
@@ -388,19 +386,20 @@ TEST (peer_container, random_set)
 	(void)new_ms;
 }
 
+// Can take up to 2 hours
 TEST (store, unchecked_load)
 {
 	badem::system system (24000, 1);
 	auto & node (*system.nodes[0]);
 	auto block (std::make_shared<badem::send_block> (0, 0, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, 0));
+	constexpr auto num_unchecked = 1000000;
 	for (auto i (0); i < 1000000; ++i)
 	{
 		auto transaction (node.store.tx_begin_write ());
 		node.store.unchecked_put (transaction, i, block);
 	}
 	auto transaction (node.store.tx_begin_read ());
-	auto count (node.store.unchecked_count (transaction));
-	(void)count;
+	ASSERT_EQ (num_unchecked, node.store.unchecked_count (transaction));
 }
 
 TEST (store, vote_load)
@@ -411,7 +410,7 @@ TEST (store, vote_load)
 	for (auto i (0); i < 1000000; ++i)
 	{
 		auto vote (std::make_shared<badem::vote> (badem::test_genesis_key.pub, badem::test_genesis_key.prv, i, block));
-		node.vote_processor.vote (vote, std::make_shared<badem::transport::channel_udp> (system.nodes[0]->network.udp_channels, system.nodes[0]->network.endpoint ()));
+		node.vote_processor.vote (vote, std::make_shared<badem::transport::channel_udp> (system.nodes[0]->network.udp_channels, system.nodes[0]->network.endpoint (), system.nodes[0]->network_params.protocol.protocol_version));
 	}
 }
 
@@ -427,9 +426,8 @@ TEST (wallets, rep_scan)
 			wallet->deterministic_insert (transaction);
 		}
 	}
-	auto transaction (node.store.tx_begin_read ());
 	auto begin (std::chrono::steady_clock::now ());
-	node.wallets.foreach_representative (transaction, [](badem::public_key const & pub_a, badem::raw_key const & prv_a) {
+	node.wallets.foreach_representative ([](badem::public_key const & pub_a, badem::raw_key const & prv_a) {
 	});
 	ASSERT_LT (std::chrono::steady_clock::now () - begin, std::chrono::milliseconds (5));
 }
@@ -444,7 +442,7 @@ TEST (node, mass_vote_by_hash)
 	std::vector<std::shared_ptr<badem::state_block>> blocks;
 	for (auto i (0); i < 10000; ++i)
 	{
-		auto block (std::make_shared<badem::state_block> (badem::test_genesis_key.pub, previous, badem::test_genesis_key.pub, badem::genesis_amount - (i + 1) * badem::kBDM_ratio, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (previous)));
+		auto block (std::make_shared<badem::state_block> (badem::test_genesis_key.pub, previous, badem::test_genesis_key.pub, badem::genesis_amount - (i + 1) * badem::Gbdm_ratio, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (previous)));
 		previous = block->hash ();
 		blocks.push_back (block);
 	}
@@ -454,15 +452,22 @@ TEST (node, mass_vote_by_hash)
 	}
 }
 
+namespace badem
+{
 TEST (confirmation_height, many_accounts_single_confirmation)
 {
 	badem::system system;
 	badem::node_config node_config (24000, system.logging);
 	node_config.online_weight_minimum = 100;
-	badem::node_flags node_flags;
-	node_flags.delay_frontier_confirmation_height_updating = true;
-	auto node = system.add_node (node_config, node_flags);
+	node_config.frontiers_confirmation = badem::frontiers_confirmation_mode::disabled;
+	auto node = system.add_node (node_config);
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+
+	// As this test can take a while extend the next frontier check
+	{
+		badem::lock_guard<std::mutex> guard (node->active.mutex);
+		node->active.next_frontier_check = std::chrono::steady_clock::now () + 7200s;
+	}
 
 	// The number of frontiers should be more than the batch_write_size to test the amount of blocks confirmed is correct.
 	auto num_accounts = badem::confirmation_height_processor::batch_write_size * 2 + 50;
@@ -475,9 +480,9 @@ TEST (confirmation_height, many_accounts_single_confirmation)
 			badem::keypair key;
 			system.wallet (0)->insert_adhoc (key.prv);
 
-			badem::send_block send (last_open_hash, key.pub, badem::kBDM_ratio, last_keypair.prv, last_keypair.pub, system.work.generate (last_open_hash));
+			badem::send_block send (last_open_hash, key.pub, node->config.online_weight_minimum.number (), last_keypair.prv, last_keypair.pub, *system.work.generate (last_open_hash));
 			ASSERT_EQ (badem::process_result::progress, node->ledger.process (transaction, send).code);
-			badem::open_block open (send.hash (), last_keypair.pub, key.pub, key.prv, key.pub, system.work.generate (key.pub));
+			badem::open_block open (send.hash (), last_keypair.pub, key.pub, key.prv, key.pub, *system.work.generate (key.pub));
 			ASSERT_EQ (badem::process_result::progress, node->ledger.process (transaction, open).code);
 			last_open_hash = open.hash ();
 			last_keypair = key;
@@ -519,15 +524,21 @@ TEST (confirmation_height, many_accounts_single_confirmation)
 	ASSERT_EQ (node->ledger.stats.count (badem::stat::type::confirmation_height, badem::stat::detail::blocks_confirmed, badem::stat::dir::in), num_accounts * 2 - 2);
 }
 
+// Can take up to 10 minutes
 TEST (confirmation_height, many_accounts_many_confirmations)
 {
 	badem::system system;
 	badem::node_config node_config (24000, system.logging);
 	node_config.online_weight_minimum = 100;
-	badem::node_flags node_flags;
-	node_flags.delay_frontier_confirmation_height_updating = true;
-	auto node = system.add_node (node_config, node_flags);
+	node_config.frontiers_confirmation = badem::frontiers_confirmation_mode::disabled;
+	auto node = system.add_node (node_config);
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
+
+	// As this test can take a while extend the next frontier check
+	{
+		badem::lock_guard<std::mutex> guard (node->active.mutex);
+		node->active.next_frontier_check = std::chrono::steady_clock::now () + 7200s;
+	}
 
 	auto num_accounts = 10000;
 	auto latest_genesis = node->latest (badem::test_genesis_key.pub);
@@ -539,9 +550,9 @@ TEST (confirmation_height, many_accounts_many_confirmations)
 			badem::keypair key;
 			system.wallet (0)->insert_adhoc (key.prv);
 
-			badem::send_block send (latest_genesis, key.pub, badem::kBDM_ratio, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (latest_genesis));
+			badem::send_block send (latest_genesis, key.pub, node->config.online_weight_minimum.number (), badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (latest_genesis));
 			ASSERT_EQ (badem::process_result::progress, node->ledger.process (transaction, send).code);
-			auto open = std::make_shared<badem::open_block> (send.hash (), badem::test_genesis_key.pub, key.pub, key.prv, key.pub, system.work.generate (key.pub));
+			auto open = std::make_shared<badem::open_block> (send.hash (), badem::test_genesis_key.pub, key.pub, key.prv, key.pub, *system.work.generate (key.pub));
 			ASSERT_EQ (badem::process_result::progress, node->ledger.process (transaction, *open).code);
 			open_blocks.push_back (std::move (open));
 			latest_genesis = send.hash ();
@@ -564,19 +575,25 @@ TEST (confirmation_height, many_accounts_many_confirmations)
 TEST (confirmation_height, long_chains)
 {
 	badem::system system;
-	badem::node_flags node_flags;
-	node_flags.delay_frontier_confirmation_height_updating = true;
-	auto node = system.add_node (badem::node_config (24000, system.logging), node_flags);
+	badem::node_config node_config (24000, system.logging);
+	node_config.frontiers_confirmation = badem::frontiers_confirmation_mode::disabled;
+	auto node = system.add_node (node_config);
 	badem::keypair key1;
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	badem::block_hash latest (node->latest (badem::test_genesis_key.pub));
 	system.wallet (0)->insert_adhoc (key1.prv);
 
+	// As this test can take a while extend the next frontier check
+	{
+		badem::lock_guard<std::mutex> guard (node->active.mutex);
+		node->active.next_frontier_check = std::chrono::steady_clock::now () + 7200s;
+	}
+
 	constexpr auto num_blocks = 10000;
 
 	// First open the other account
-	badem::send_block send (latest, key1.pub, badem::genesis_amount - badem::kBDM_ratio + num_blocks + 1, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (latest));
-	badem::open_block open (send.hash (), badem::genesis_account, key1.pub, key1.prv, key1.pub, system.work.generate (key1.pub));
+	badem::send_block send (latest, key1.pub, badem::genesis_amount - badem::Gbdm_ratio + num_blocks + 1, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (latest));
+	badem::open_block open (send.hash (), badem::genesis_account, key1.pub, key1.prv, key1.pub, *system.work.generate (key1.pub));
 	{
 		auto transaction = node->store.tx_begin_write ();
 		ASSERT_EQ (badem::process_result::progress, node->ledger.process (transaction, send).code);
@@ -590,9 +607,9 @@ TEST (confirmation_height, long_chains)
 		auto transaction = node->store.tx_begin_write ();
 		for (auto i = num_blocks - 1; i > 0; --i)
 		{
-			badem::send_block send (previous_genesis_chain_hash, key1.pub, badem::genesis_amount - badem::kBDM_ratio + i + 1, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (previous_genesis_chain_hash));
+			badem::send_block send (previous_genesis_chain_hash, key1.pub, badem::genesis_amount - badem::Gbdm_ratio + i + 1, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (previous_genesis_chain_hash));
 			ASSERT_EQ (badem::process_result::progress, node->ledger.process (transaction, send).code);
-			badem::receive_block receive (previous_destination_chain_hash, send.hash (), key1.prv, key1.pub, system.work.generate (previous_destination_chain_hash));
+			badem::receive_block receive (previous_destination_chain_hash, send.hash (), key1.prv, key1.pub, *system.work.generate (previous_destination_chain_hash));
 			ASSERT_EQ (badem::process_result::progress, node->ledger.process (transaction, receive).code);
 
 			previous_genesis_chain_hash = send.hash ();
@@ -601,11 +618,12 @@ TEST (confirmation_height, long_chains)
 	}
 
 	// Send one from destination to genesis and pocket it
-	badem::send_block send1 (previous_destination_chain_hash, badem::test_genesis_key.pub, badem::kBDM_ratio - 2, key1.prv, key1.pub, system.work.generate (previous_destination_chain_hash));
-	auto receive1 (std::make_shared<badem::state_block> (badem::test_genesis_key.pub, previous_genesis_chain_hash, badem::genesis_account, badem::genesis_amount - badem::kBDM_ratio + 1, send1.hash (), badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (previous_genesis_chain_hash)));
+	badem::send_block send1 (previous_destination_chain_hash, badem::test_genesis_key.pub, badem::Gbdm_ratio - 2, key1.prv, key1.pub, *system.work.generate (previous_destination_chain_hash));
+	auto receive1 (std::make_shared<badem::state_block> (badem::test_genesis_key.pub, previous_genesis_chain_hash, badem::genesis_account, badem::genesis_amount - badem::Gbdm_ratio + 1, send1.hash (), badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (previous_genesis_chain_hash)));
 
-	// Unpocketed
-	badem::state_block send2 (badem::genesis_account, receive1->hash (), badem::genesis_account, badem::genesis_amount - badem::kBDM_ratio, key1.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (receive1->hash ()));
+	// Unpocketed. Send to a non-existing account to prevent auto receives from the wallet adjusting expected confirmation height
+	badem::keypair key2;
+	badem::state_block send2 (badem::genesis_account, receive1->hash (), badem::genesis_account, badem::genesis_amount - badem::Gbdm_ratio, key2.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (receive1->hash ()));
 
 	{
 		auto transaction = node->store.tx_begin_write ();
@@ -645,24 +663,22 @@ TEST (confirmation_height, long_chains)
 	ASSERT_EQ (node->ledger.stats.count (badem::stat::type::confirmation_height, badem::stat::detail::blocks_confirmed, badem::stat::dir::in), num_blocks * 2 + 2);
 }
 
-namespace badem
-{
+// Can take up to 1 hour
 TEST (confirmation_height, prioritize_frontiers_overwrite)
 {
 	badem::system system;
 	badem::node_config node_config (24000, system.logging);
-	badem::node_flags node_flags;
-	node_flags.delay_frontier_confirmation_height_updating = true;
-	auto node = system.add_node (node_config, node_flags);
+	node_config.frontiers_confirmation = badem::frontiers_confirmation_mode::disabled;
+	auto node = system.add_node (node_config);
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 
 	// As this test can take a while extend the next frontier check
 	{
-		std::lock_guard<std::mutex> guard (node->active.mutex);
-		node->active.next_frontier_check = std::chrono::steady_clock::now () + 3600s;
+		badem::lock_guard<std::mutex> guard (node->active.mutex);
+		node->active.next_frontier_check = std::chrono::steady_clock::now () + 7200s;
 	}
 
-	auto num_accounts = node->active.max_priority_cementable_frontiers;
+	auto num_accounts = node->active.max_priority_cementable_frontiers * 2;
 	badem::keypair last_keypair = badem::test_genesis_key;
 	auto last_open_hash = node->latest (badem::test_genesis_key.pub);
 	// Clear confirmation height so that the genesis account has the same amount of uncemented blocks as the other frontiers
@@ -678,9 +694,9 @@ TEST (confirmation_height, prioritize_frontiers_overwrite)
 			badem::keypair key;
 			system.wallet (0)->insert_adhoc (key.prv);
 
-			badem::send_block send (last_open_hash, key.pub, badem::kBDM_ratio - 1, last_keypair.prv, last_keypair.pub, system.work.generate (last_open_hash));
+			badem::send_block send (last_open_hash, key.pub, badem::Gbdm_ratio - 1, last_keypair.prv, last_keypair.pub, *system.work.generate (last_open_hash));
 			ASSERT_EQ (badem::process_result::progress, node->ledger.process (transaction, send).code);
-			badem::open_block open (send.hash (), last_keypair.pub, key.pub, key.prv, key.pub, system.work.generate (key.pub));
+			badem::open_block open (send.hash (), last_keypair.pub, key.pub, key.prv, key.pub, *system.work.generate (key.pub));
 			ASSERT_EQ (badem::process_result::progress, node->ledger.process (transaction, open).code);
 			last_open_hash = open.hash ();
 			last_keypair = key;
@@ -689,44 +705,53 @@ TEST (confirmation_height, prioritize_frontiers_overwrite)
 
 	auto transaction = node->store.tx_begin_read ();
 	{
-		node->active.prioritize_frontiers_for_confirmation (transaction, std::chrono::seconds (60), std::chrono::seconds (1));
-		ASSERT_EQ (node->active.priority_cementable_frontiers_size (), num_accounts);
+		// Fill both priority frontier collections.
+		node->active.prioritize_frontiers_for_confirmation (transaction, std::chrono::seconds (60), std::chrono::seconds (60));
+		ASSERT_EQ (node->active.priority_cementable_frontiers_size () + node->active.priority_wallet_cementable_frontiers_size (), num_accounts);
+
+		// Confirm the last frontier has the least number of uncemented blocks
 		auto last_frontier_it = node->active.priority_cementable_frontiers.get<1> ().end ();
 		--last_frontier_it;
 		ASSERT_EQ (last_frontier_it->account, last_keypair.pub);
 		ASSERT_EQ (last_frontier_it->blocks_uncemented, 1);
 	}
 
-	// Add a new frontier with 1 block, it should not be added to the frontier container
+	// Add a new frontier with 1 block, it should not be added to the frontier container because it is not higher than any already in the maxed out container
 	badem::keypair key;
 	auto latest_genesis = node->latest (badem::test_genesis_key.pub);
-	badem::send_block send (latest_genesis, key.pub, badem::kBDM_ratio - 1, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (latest_genesis));
-	badem::open_block open (send.hash (), badem::test_genesis_key.pub, key.pub, key.prv, key.pub, system.work.generate (key.pub));
+	badem::send_block send (latest_genesis, key.pub, badem::Gbdm_ratio - 1, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (latest_genesis));
+	badem::open_block open (send.hash (), badem::test_genesis_key.pub, key.pub, key.prv, key.pub, *system.work.generate (key.pub));
 	{
 		auto transaction = node->store.tx_begin_write ();
 		ASSERT_EQ (badem::process_result::progress, node->ledger.process (transaction, send).code);
 		ASSERT_EQ (badem::process_result::progress, node->ledger.process (transaction, open).code);
 	}
 	transaction.refresh ();
-	node->active.prioritize_frontiers_for_confirmation (transaction, std::chrono::seconds (60), std::chrono::seconds (1));
-	ASSERT_EQ (node->active.priority_cementable_frontiers_size (), num_accounts);
-	auto last_frontier_it = node->active.priority_cementable_frontiers.get<1> ().end ();
-	--last_frontier_it;
-	ASSERT_EQ (last_frontier_it->account, last_keypair.pub);
-	ASSERT_EQ (last_frontier_it->blocks_uncemented, 1);
+	node->active.prioritize_frontiers_for_confirmation (transaction, std::chrono::seconds (60), std::chrono::seconds (60));
+	ASSERT_EQ (node->active.priority_cementable_frontiers_size (), num_accounts / 2);
+	ASSERT_EQ (node->active.priority_wallet_cementable_frontiers_size (), num_accounts / 2);
 
-	badem::send_block send1 (send.hash (), key.pub, badem::kBDM_ratio - 2, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (send.hash ()));
-	badem::receive_block receive (open.hash (), send1.hash (), key.prv, key.pub, system.work.generate (open.hash ()));
+	// The account now has an extra block (2 in total) so has 1 more uncemented block than the next smallest frontier in the collection.
+	badem::send_block send1 (send.hash (), key.pub, badem::Gbdm_ratio - 2, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (send.hash ()));
+	badem::receive_block receive (open.hash (), send1.hash (), key.prv, key.pub, *system.work.generate (open.hash ()));
 	{
 		auto transaction = node->store.tx_begin_write ();
 		ASSERT_EQ (badem::process_result::progress, node->ledger.process (transaction, send1).code);
 		ASSERT_EQ (badem::process_result::progress, node->ledger.process (transaction, receive).code);
 	}
 
+	// Confirm that it gets replaced
 	transaction.refresh ();
-	node->active.prioritize_frontiers_for_confirmation (transaction, std::chrono::seconds (5), std::chrono::seconds (1));
-	ASSERT_EQ (node->active.priority_cementable_frontiers_size (), num_accounts);
+	node->active.prioritize_frontiers_for_confirmation (transaction, std::chrono::seconds (60), std::chrono::seconds (60));
+	ASSERT_EQ (node->active.priority_cementable_frontiers_size (), num_accounts / 2);
+	ASSERT_EQ (node->active.priority_wallet_cementable_frontiers_size (), num_accounts / 2);
 	ASSERT_EQ (node->active.priority_cementable_frontiers.find (last_keypair.pub), node->active.priority_cementable_frontiers.end ());
 	ASSERT_NE (node->active.priority_cementable_frontiers.find (key.pub), node->active.priority_cementable_frontiers.end ());
+
+	// Check there are no matching accounts found in both containers
+	for (auto it = node->active.priority_cementable_frontiers.begin (); it != node->active.priority_cementable_frontiers.end (); ++it)
+	{
+		ASSERT_EQ (node->active.priority_wallet_cementable_frontiers.find (it->account), node->active.priority_wallet_cementable_frontiers.end ());
+	}
 }
 }

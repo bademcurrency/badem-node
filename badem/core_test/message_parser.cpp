@@ -62,7 +62,7 @@ TEST (message_parser, exact_confirm_ack_size)
 	badem::block_uniquer block_uniquer;
 	badem::vote_uniquer vote_uniquer (block_uniquer);
 	badem::message_parser parser (block_uniquer, vote_uniquer, visitor, system.work);
-	auto block (std::make_shared<badem::send_block> (1, 1, 2, badem::keypair ().prv, 4, system.work.generate (1)));
+	auto block (std::make_shared<badem::send_block> (1, 1, 2, badem::keypair ().prv, 4, *system.work.generate (badem::root (1))));
 	auto vote (std::make_shared<badem::vote> (0, badem::keypair ().prv, 0, std::move (block)));
 	badem::confirm_ack message (vote);
 	std::vector<uint8_t> bytes;
@@ -95,7 +95,7 @@ TEST (message_parser, exact_confirm_req_size)
 	badem::block_uniquer block_uniquer;
 	badem::vote_uniquer vote_uniquer (block_uniquer);
 	badem::message_parser parser (block_uniquer, vote_uniquer, visitor, system.work);
-	auto block (std::make_shared<badem::send_block> (1, 1, 2, badem::keypair ().prv, 4, system.work.generate (1)));
+	auto block (std::make_shared<badem::send_block> (1, 1, 2, badem::keypair ().prv, 4, *system.work.generate (badem::root (1))));
 	badem::confirm_req message (std::move (block));
 	std::vector<uint8_t> bytes;
 	{
@@ -127,7 +127,7 @@ TEST (message_parser, exact_confirm_req_hash_size)
 	badem::block_uniquer block_uniquer;
 	badem::vote_uniquer vote_uniquer (block_uniquer);
 	badem::message_parser parser (block_uniquer, vote_uniquer, visitor, system.work);
-	badem::send_block block (1, 1, 2, badem::keypair ().prv, 4, system.work.generate (1));
+	badem::send_block block (1, 1, 2, badem::keypair ().prv, 4, *system.work.generate (badem::root (1)));
 	badem::confirm_req message (block.hash (), block.root ());
 	std::vector<uint8_t> bytes;
 	{
@@ -159,7 +159,7 @@ TEST (message_parser, exact_publish_size)
 	badem::block_uniquer block_uniquer;
 	badem::vote_uniquer vote_uniquer (block_uniquer);
 	badem::message_parser parser (block_uniquer, vote_uniquer, visitor, system.work);
-	auto block (std::make_shared<badem::send_block> (1, 1, 2, badem::keypair ().prv, 4, system.work.generate (1)));
+	auto block (std::make_shared<badem::send_block> (1, 1, 2, badem::keypair ().prv, 4, *system.work.generate (badem::root (1))));
 	badem::publish message (std::move (block));
 	std::vector<uint8_t> bytes;
 	{

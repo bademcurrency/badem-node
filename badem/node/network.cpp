@@ -52,10 +52,7 @@ disconnect_observer ([]() {})
 
 badem::network::~network ()
 {
-	for (auto & thread : packet_processing_threads)
-	{
-		thread.join ();
-	}
+	stop ();
 }
 
 void badem::network::start ()
@@ -75,10 +72,17 @@ void badem::network::start ()
 
 void badem::network::stop ()
 {
-	udp_channels.stop ();
-	tcp_channels.stop ();
-	resolver.cancel ();
-	buffer_container.stop ();
+	if (!stopped.exchange (true))
+	{
+		udp_channels.stop ();
+		tcp_channels.stop ();
+		resolver.cancel ();
+		buffer_container.stop ();
+		for (auto & thread : packet_processing_threads)
+		{
+			thread.join ();
+		}
+	}
 }
 
 void badem::network::send_keepalive (std::shared_ptr<badem::transport::channel> channel_a)
@@ -101,7 +105,9 @@ void badem::network::send_keepalive_self (std::shared_ptr<badem::transport::chan
 		if (external_address.address () != boost::asio::ip::address_v4::any ())
 		{
 			message.peers[0] = badem::endpoint (boost::asio::ip::address_v6{}, endpoint ().port ());
-			message.peers[1] = external_address;
+			boost::system::error_code ec;
+			auto external_v6 = boost::asio::ip::address_v6::from_string (external_address.address ().to_string (), ec);
+			message.peers[1] = badem::endpoint (external_v6, external_address.port ());
 		}
 		else
 		{
@@ -139,7 +145,7 @@ bool confirm_block (badem::transaction const & transaction_a, badem::node & node
 		if (votes.empty ())
 		{
 			// Generate new vote
-			node_a.wallets.foreach_representative (transaction_a, [&result, &list_a, &node_a, &transaction_a, &hash](badem::public_key const & pub_a, badem::raw_key const & prv_a) {
+			node_a.wallets.foreach_representative ([&result, &list_a, &node_a, &transaction_a, &hash](badem::public_key const & pub_a, badem::raw_key const & prv_a) {
 				result = true;
 				auto vote (node_a.store.vote_generate (transaction_a, pub_a, prv_a, std::vector<badem::block_hash> (1, hash)));
 				badem::confirm_ack confirm (vote);
@@ -186,7 +192,7 @@ void badem::network::confirm_hashes (badem::transaction const & transaction_a, s
 {
 	if (node.config.enable_voting)
 	{
-		node.wallets.foreach_representative (transaction_a, [this, &blocks_bundle_a, &channel_a, &transaction_a](badem::public_key const & pub_a, badem::raw_key const & prv_a) {
+		node.wallets.foreach_representative ([this, &blocks_bundle_a, &channel_a, &transaction_a](badem::public_key const & pub_a, badem::raw_key const & prv_a) {
 			auto vote (this->node.store.vote_generate (transaction_a, pub_a, prv_a, blocks_bundle_a));
 			badem::confirm_ack confirm (vote);
 			std::shared_ptr<std::vector<uint8_t>> bytes (new std::vector<uint8_t>);
@@ -224,29 +230,33 @@ void badem::network::flood_message (badem::message const & message_a, bool const
 	}
 }
 
-void badem::network::flood_block_batch (std::deque<std::shared_ptr<badem::block>> blocks_a, unsigned delay_a)
+void badem::network::flood_block_many (std::deque<std::shared_ptr<badem::block>> blocks_a, std::function<void()> callback_a, unsigned delay_a)
 {
-	auto block (blocks_a.front ());
+	auto block_l (blocks_a.front ());
 	blocks_a.pop_front ();
-	flood_block (block);
+	flood_block (block_l);
 	if (!blocks_a.empty ())
 	{
 		std::weak_ptr<badem::node> node_w (node.shared ());
 		// clang-format off
-		node.alarm.add (std::chrono::steady_clock::now () + std::chrono::milliseconds (delay_a + std::rand () % delay_a), [node_w, blocks (std::move (blocks_a)), delay_a]() {
+		node.alarm.add (std::chrono::steady_clock::now () + std::chrono::milliseconds (delay_a + std::rand () % delay_a), [node_w, blocks (std::move (blocks_a)), callback_a, delay_a]() {
 			if (auto node_l = node_w.lock ())
 			{
-				node_l->network.flood_block_batch (std::move (blocks), delay_a);
+				node_l->network.flood_block_many (std::move (blocks), callback_a, delay_a);
 			}
 		});
 		// clang-format on
+	}
+	else if (callback_a)
+	{
+		callback_a ();
 	}
 }
 
 void badem::network::send_confirm_req (std::shared_ptr<badem::transport::channel> channel_a, std::shared_ptr<badem::block> block_a)
 {
 	// Confirmation request with hash + root
-	if (channel_a->get_network_version () >= badem::tcp_realtime_protocol_version_min)
+	if (channel_a->get_network_version () >= node.network_params.protocol.tcp_realtime_protocol_version_min)
 	{
 		badem::confirm_req req (block_a->hash (), block_a->root ());
 		channel_a->send (req);
@@ -319,73 +329,76 @@ void badem::network::broadcast_confirm_req_base (std::shared_ptr<badem::block> b
 	}
 }
 
-void badem::network::broadcast_confirm_req_batch (std::unordered_map<std::shared_ptr<badem::transport::channel>, std::vector<std::pair<badem::block_hash, badem::block_hash>>> request_bundle_a, unsigned delay_a, bool resumption)
+void badem::network::broadcast_confirm_req_batched_many (std::unordered_map<std::shared_ptr<badem::transport::channel>, std::deque<std::pair<badem::block_hash, badem::root>>> request_bundle_a, std::function<void()> callback_a, unsigned delay_a, bool resumption_a)
 {
-	const size_t max_reps = 50;
-	if (!resumption && node.config.logging.network_logging ())
+	if (!resumption_a && node.config.logging.network_logging ())
 	{
 		node.logger.try_log (boost::str (boost::format ("Broadcasting batch confirm req to %1% representatives") % request_bundle_a.size ()));
 	}
-	auto count (0);
-	while (!request_bundle_a.empty () && count < max_reps)
+
+	for (auto i (request_bundle_a.begin ()), n (request_bundle_a.end ()); i != n;)
 	{
-		auto j (request_bundle_a.begin ());
-		while (j != request_bundle_a.end ())
+		std::vector<std::pair<badem::block_hash, badem::root>> roots_hashes_l;
+		// Limit max request size hash + root to 7 pairs
+		while (roots_hashes_l.size () < confirm_req_hashes_max && !i->second.empty ())
 		{
-			count++;
-			std::vector<std::pair<badem::block_hash, badem::block_hash>> roots_hashes;
-			// Limit max request size hash + root to 7 pairs
-			while (roots_hashes.size () <= confirm_req_hashes_max && !j->second.empty ())
-			{
-				roots_hashes.push_back (j->second.back ());
-				j->second.pop_back ();
-			}
-			badem::confirm_req req (roots_hashes);
-			j->first->send (req);
-			if (j->second.empty ())
-			{
-				j = request_bundle_a.erase (j);
-			}
-			else
-			{
-				++j;
-			}
+			// expects ordering by priority, descending
+			roots_hashes_l.push_back (i->second.front ());
+			i->second.pop_front ();
+		}
+		badem::confirm_req req (roots_hashes_l);
+		i->first->send (req);
+		if (i->second.empty ())
+		{
+			i = request_bundle_a.erase (i);
+		}
+		else
+		{
+			++i;
 		}
 	}
 	if (!request_bundle_a.empty ())
 	{
 		std::weak_ptr<badem::node> node_w (node.shared ());
-		node.alarm.add (std::chrono::steady_clock::now () + std::chrono::milliseconds (delay_a), [node_w, request_bundle_a, delay_a]() {
+		node.alarm.add (std::chrono::steady_clock::now () + std::chrono::milliseconds (delay_a), [node_w, request_bundle_a, callback_a, delay_a]() {
 			if (auto node_l = node_w.lock ())
 			{
-				node_l->network.broadcast_confirm_req_batch (request_bundle_a, delay_a, true);
+				node_l->network.broadcast_confirm_req_batched_many (request_bundle_a, callback_a, delay_a, true);
 			}
 		});
+	}
+	else if (callback_a)
+	{
+		callback_a ();
 	}
 }
 
-void badem::network::broadcast_confirm_req_batch (std::deque<std::pair<std::shared_ptr<badem::block>, std::shared_ptr<std::vector<std::shared_ptr<badem::transport::channel>>>>> deque_a, unsigned delay_a)
+void badem::network::broadcast_confirm_req_many (std::deque<std::pair<std::shared_ptr<badem::block>, std::shared_ptr<std::vector<std::shared_ptr<badem::transport::channel>>>>> requests_a, std::function<void()> callback_a, unsigned delay_a)
 {
-	auto pair (deque_a.front ());
-	deque_a.pop_front ();
-	auto block (pair.first);
+	auto pair_l (requests_a.front ());
+	requests_a.pop_front ();
+	auto block_l (pair_l.first);
 	// confirm_req to representatives
-	auto endpoints (pair.second);
+	auto endpoints (pair_l.second);
 	if (!endpoints->empty ())
 	{
-		broadcast_confirm_req_base (block, endpoints, delay_a);
+		broadcast_confirm_req_base (block_l, endpoints, delay_a);
 	}
 	/* Continue while blocks remain
 	Broadcast with random delay between delay_a & 2*delay_a */
-	if (!deque_a.empty ())
+	if (!requests_a.empty ())
 	{
 		std::weak_ptr<badem::node> node_w (node.shared ());
-		node.alarm.add (std::chrono::steady_clock::now () + std::chrono::milliseconds (delay_a + std::rand () % delay_a), [node_w, deque_a, delay_a]() {
+		node.alarm.add (std::chrono::steady_clock::now () + std::chrono::milliseconds (delay_a + std::rand () % delay_a), [node_w, requests_a, callback_a, delay_a]() {
 			if (auto node_l = node_w.lock ())
 			{
-				node_l->network.broadcast_confirm_req_batch (deque_a, delay_a);
+				node_l->network.broadcast_confirm_req_many (requests_a, callback_a, delay_a);
 			}
 		});
+	}
+	else if (callback_a)
+	{
+		callback_a ();
 	}
 }
 
@@ -418,6 +431,10 @@ public:
 		if (!node.block_processor.full ())
 		{
 			node.process_active (message_a.block);
+		}
+		else
+		{
+			node.stats.inc (badem::stat::type::drop, badem::stat::detail::publish, badem::stat::dir::in);
 		}
 		node.active.publish (message_a.block);
 	}
@@ -466,23 +483,24 @@ public:
 						++cached_count;
 						cached_votes.insert (cached_votes.end (), find_votes.begin (), find_votes.end ());
 					}
-					if (!find_votes.empty () || node.store.block_exists (transaction, root_hash.first))
+					if (!find_votes.empty () || (!root_hash.first.is_zero () && node.store.block_exists (transaction, root_hash.first)))
 					{
 						blocks_bundle.push_back (root_hash.first);
 					}
-					else
+					else if (!root_hash.second.is_zero ())
 					{
 						badem::block_hash successor (0);
 						// Search for block root
 						successor = node.store.block_successor (transaction, root_hash.second);
 						// Search for account root
-						if (successor.is_zero () && node.store.account_exists (transaction, root_hash.second))
+						if (successor.is_zero ())
 						{
 							badem::account_info info;
 							auto error (node.store.account_get (transaction, root_hash.second, info));
-							(void)error;
-							assert (!error);
-							successor = info.open_block;
+							if (!error)
+							{
+								successor = info.open_block;
+							}
 						}
 						if (!successor.is_zero ())
 						{
@@ -534,6 +552,10 @@ public:
 				if (!node.block_processor.full ())
 				{
 					node.process_active (block);
+				}
+				else
+				{
+					node.stats.inc (badem::stat::type::drop, badem::stat::detail::confirm_ack, badem::stat::dir::in);
 				}
 				node.active.publish (block);
 			}
@@ -675,17 +697,18 @@ void badem::network::random_fill (std::array<badem::endpoint, 8> & target_a) con
 	}
 }
 
-badem::tcp_endpoint badem::network::bootstrap_peer ()
+badem::tcp_endpoint badem::network::bootstrap_peer (bool lazy_bootstrap)
 {
 	badem::tcp_endpoint result (boost::asio::ip::address_v6::any (), 0);
 	bool use_udp_peer (badem::random_pool::generate_word32 (0, 1));
+	auto protocol_min (lazy_bootstrap ? node.network_params.protocol.protocol_version_bootstrap_lazy_min : node.network_params.protocol.protocol_version_bootstrap_min);
 	if (use_udp_peer || tcp_channels.size () == 0)
 	{
-		result = udp_channels.bootstrap_peer ();
+		result = udp_channels.bootstrap_peer (protocol_min);
 	}
 	if (result == badem::tcp_endpoint (boost::asio::ip::address_v6::any (), 0))
 	{
-		result = tcp_channels.bootstrap_peer ();
+		result = tcp_channels.bootstrap_peer (protocol_min);
 	}
 	return result;
 }
@@ -706,42 +729,6 @@ std::shared_ptr<badem::transport::channel> badem::network::find_node_id (badem::
 	if (!result)
 	{
 		result = udp_channels.find_node_id (node_id_a);
-	}
-	return result;
-}
-
-std::shared_ptr<badem::transport::channel> badem::network::find_response_channel (badem::tcp_endpoint const & endpoint_a, badem::account const & node_id_a)
-{
-	// Search by node ID
-	std::shared_ptr<badem::transport::channel> result (find_node_id (node_id_a));
-	if (!result)
-	{
-		// Search in response channels
-		auto channels_list (response_channels.search (endpoint_a));
-		// TCP
-		for (auto & i : channels_list)
-		{
-			auto search_channel (tcp_channels.find_channel (i));
-			if (search_channel != nullptr)
-			{
-				result = search_channel;
-				break;
-			}
-		}
-		// UDP
-		if (!result)
-		{
-			for (auto & i : channels_list)
-			{
-				auto udp_endpoint (badem::transport::map_tcp_to_endpoint (i));
-				auto search_channel (udp_channels.channel (udp_endpoint));
-				if (search_channel != nullptr)
-				{
-					result = search_channel;
-					break;
-				}
-			}
-		}
 	}
 	return result;
 }
@@ -833,11 +820,13 @@ stopped (false)
 
 badem::message_buffer * badem::message_buffer_manager::allocate ()
 {
-	std::unique_lock<std::mutex> lock (mutex);
-	while (!stopped && free.empty () && full.empty ())
+	badem::unique_lock<std::mutex> lock (mutex);
+	if (!stopped && free.empty () && full.empty ())
 	{
 		stats.inc (badem::stat::type::udp, badem::stat::detail::blocking, badem::stat::dir::in);
-		condition.wait (lock);
+		// clang-format off
+		condition.wait (lock, [& stopped = stopped, &free = free, &full = full] { return stopped || !free.empty () || !full.empty (); });
+		// clang-format on
 	}
 	badem::message_buffer * result (nullptr);
 	if (!free.empty ())
@@ -859,7 +848,7 @@ void badem::message_buffer_manager::enqueue (badem::message_buffer * data_a)
 {
 	assert (data_a != nullptr);
 	{
-		std::lock_guard<std::mutex> lock (mutex);
+		badem::lock_guard<std::mutex> lock (mutex);
 		full.push_back (data_a);
 	}
 	condition.notify_all ();
@@ -867,7 +856,7 @@ void badem::message_buffer_manager::enqueue (badem::message_buffer * data_a)
 
 badem::message_buffer * badem::message_buffer_manager::dequeue ()
 {
-	std::unique_lock<std::mutex> lock (mutex);
+	badem::unique_lock<std::mutex> lock (mutex);
 	while (!stopped && full.empty ())
 	{
 		condition.wait (lock);
@@ -885,7 +874,7 @@ void badem::message_buffer_manager::release (badem::message_buffer * data_a)
 {
 	assert (data_a != nullptr);
 	{
-		std::lock_guard<std::mutex> lock (mutex);
+		badem::lock_guard<std::mutex> lock (mutex);
 		free.push_back (data_a);
 	}
 	condition.notify_all ();
@@ -894,59 +883,17 @@ void badem::message_buffer_manager::release (badem::message_buffer * data_a)
 void badem::message_buffer_manager::stop ()
 {
 	{
-		std::lock_guard<std::mutex> lock (mutex);
+		badem::lock_guard<std::mutex> lock (mutex);
 		stopped = true;
 	}
 	condition.notify_all ();
-}
-
-void badem::response_channels::add (badem::tcp_endpoint const & endpoint_a, std::vector<badem::tcp_endpoint> insert_channels)
-{
-	std::lock_guard<std::mutex> lock (response_channels_mutex);
-	channels.emplace (endpoint_a, insert_channels);
-}
-
-std::vector<badem::tcp_endpoint> badem::response_channels::search (badem::tcp_endpoint const & endpoint_a)
-{
-	std::vector<badem::tcp_endpoint> result;
-	std::lock_guard<std::mutex> lock (response_channels_mutex);
-	auto existing (channels.find (endpoint_a));
-	if (existing != channels.end ())
-	{
-		result = existing->second;
-	}
-	return result;
-}
-
-void badem::response_channels::remove (badem::tcp_endpoint const & endpoint_a)
-{
-	std::lock_guard<std::mutex> lock (response_channels_mutex);
-	channels.erase (endpoint_a);
-}
-
-size_t badem::response_channels::size ()
-{
-	std::lock_guard<std::mutex> lock (response_channels_mutex);
-	return channels.size ();
-}
-
-std::unique_ptr<badem::seq_con_info_component> badem::response_channels::collect_seq_con_info (std::string const & name)
-{
-	size_t channels_count = 0;
-	{
-		std::lock_guard<std::mutex> response_channels_guard (response_channels_mutex);
-		channels_count = channels.size ();
-	}
-	auto composite = std::make_unique<seq_con_info_composite> (name);
-	composite->add_component (std::make_unique<seq_con_info_leaf> (seq_con_info{ "channels", channels_count, sizeof (decltype (channels)::value_type) }));
-	return composite;
 }
 
 boost::optional<badem::uint256_union> badem::syn_cookies::assign (badem::endpoint const & endpoint_a)
 {
 	auto ip_addr (endpoint_a.address ());
 	assert (ip_addr.is_v6 ());
-	std::lock_guard<std::mutex> lock (syn_cookie_mutex);
+	badem::lock_guard<std::mutex> lock (syn_cookie_mutex);
 	unsigned & ip_cookies = cookies_per_ip[ip_addr];
 	boost::optional<badem::uint256_union> result;
 	if (ip_cookies < badem::transport::max_peers_per_ip)
@@ -968,7 +915,7 @@ bool badem::syn_cookies::validate (badem::endpoint const & endpoint_a, badem::ac
 {
 	auto ip_addr (endpoint_a.address ());
 	assert (ip_addr.is_v6 ());
-	std::lock_guard<std::mutex> lock (syn_cookie_mutex);
+	badem::lock_guard<std::mutex> lock (syn_cookie_mutex);
 	auto result (true);
 	auto cookie_it (cookies.find (endpoint_a));
 	if (cookie_it != cookies.end () && !badem::validate_message (node_id, cookie_it->second.cookie, sig))
@@ -990,7 +937,7 @@ bool badem::syn_cookies::validate (badem::endpoint const & endpoint_a, badem::ac
 
 void badem::syn_cookies::purge (std::chrono::steady_clock::time_point const & cutoff_a)
 {
-	std::lock_guard<std::mutex> lock (syn_cookie_mutex);
+	badem::lock_guard<std::mutex> lock (syn_cookie_mutex);
 	auto it (cookies.begin ());
 	while (it != cookies.end ())
 	{
@@ -1020,7 +967,7 @@ std::unique_ptr<badem::seq_con_info_component> badem::syn_cookies::collect_seq_c
 	size_t syn_cookies_count = 0;
 	size_t syn_cookies_per_ip_count = 0;
 	{
-		std::lock_guard<std::mutex> syn_cookie_guard (syn_cookie_mutex);
+		badem::lock_guard<std::mutex> syn_cookie_guard (syn_cookie_mutex);
 		syn_cookies_count = cookies.size ();
 		syn_cookies_per_ip_count = cookies_per_ip.size ();
 	}

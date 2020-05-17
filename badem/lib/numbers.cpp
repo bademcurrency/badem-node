@@ -31,7 +31,7 @@ uint8_t account_decode (char value)
 }
 }
 
-void badem::uint256_union::encode_account (std::string & destination_a) const
+void badem::public_key::encode_account (std::string & destination_a) const
 {
 	assert (destination_a.empty ());
 	destination_a.reserve (65);
@@ -53,19 +53,19 @@ void badem::uint256_union::encode_account (std::string & destination_a) const
 	std::reverse (destination_a.begin (), destination_a.end ());
 }
 
-std::string badem::uint256_union::to_account () const
+std::string badem::public_key::to_account () const
 {
 	std::string result;
 	encode_account (result);
 	return result;
 }
 
-std::string badem::uint256_union::to_node_id () const
+std::string badem::public_key::to_node_id () const
 {
 	return to_account ().replace (0, 4, "node");
 }
 
-bool badem::uint256_union::decode_account (std::string const & source_a)
+bool badem::public_key::decode_account (std::string const & source_a)
 {
 	auto error (source_a.size () < 5);
 	if (!error)
@@ -201,7 +201,7 @@ void badem::uint256_union::encode_hex (std::string & text) const
 {
 	assert (text.empty ());
 	std::stringstream stream;
-	stream << std::hex << std::noshowbase << std::setw (64) << std::setfill ('0');
+	stream << std::hex << std::uppercase << std::noshowbase << std::setw (64) << std::setfill ('0');
 	stream << number ();
 	text = stream.str ();
 }
@@ -318,7 +318,7 @@ void badem::uint512_union::encode_hex (std::string & text) const
 {
 	assert (text.empty ());
 	std::stringstream stream;
-	stream << std::hex << std::noshowbase << std::setw (128) << std::setfill ('0');
+	stream << std::hex << std::uppercase << std::noshowbase << std::setw (128) << std::setfill ('0');
 	stream << number ();
 	text = stream.str ();
 }
@@ -390,31 +390,38 @@ void badem::raw_key::decrypt (badem::uint256_union const & ciphertext, badem::ra
 	dec.ProcessData (data.bytes.data (), ciphertext.bytes.data (), sizeof (ciphertext.bytes));
 }
 
-badem::uint512_union badem::sign_message (badem::raw_key const & private_key, badem::public_key const & public_key, badem::uint256_union const & message)
+badem::private_key const & badem::raw_key::as_private_key () const
 {
-	badem::uint512_union result;
+	return reinterpret_cast<badem::private_key const &> (data);
+}
+
+badem::signature badem::sign_message (badem::raw_key const & private_key, badem::public_key const & public_key, badem::uint256_union const & message)
+{
+	badem::signature result;
 	ed25519_sign (message.bytes.data (), sizeof (message.bytes), private_key.data.bytes.data (), public_key.bytes.data (), result.bytes.data ());
 	return result;
 }
 
-void badem::deterministic_key (badem::uint256_union const & seed_a, uint32_t index_a, badem::uint256_union & prv_a)
+badem::private_key badem::deterministic_key (badem::raw_key const & seed_a, uint32_t index_a)
 {
+	badem::private_key prv_key;
 	blake2b_state hash;
-	blake2b_init (&hash, prv_a.bytes.size ());
-	blake2b_update (&hash, seed_a.bytes.data (), seed_a.bytes.size ());
+	blake2b_init (&hash, prv_key.bytes.size ());
+	blake2b_update (&hash, seed_a.data.bytes.data (), seed_a.data.bytes.size ());
 	badem::uint256_union index (index_a);
 	blake2b_update (&hash, reinterpret_cast<uint8_t *> (&index.dwords[7]), sizeof (uint32_t));
-	blake2b_final (&hash, prv_a.bytes.data (), prv_a.bytes.size ());
+	blake2b_final (&hash, prv_key.bytes.data (), prv_key.bytes.size ());
+	return prv_key;
 }
 
 badem::public_key badem::pub_key (badem::private_key const & privatekey_a)
 {
-	badem::uint256_union result;
+	badem::public_key result;
 	ed25519_publickey (privatekey_a.bytes.data (), result.bytes.data ());
 	return result;
 }
 
-bool badem::validate_message (badem::public_key const & public_key, badem::uint256_union const & message, badem::uint512_union const & signature)
+bool badem::validate_message (badem::public_key const & public_key, badem::uint256_union const & message, badem::signature const & signature)
 {
 	auto result (0 != ed25519_sign_open (message.bytes.data (), sizeof (message.bytes), public_key.bytes.data (), signature.bytes.data ()));
 	return result;
@@ -475,7 +482,7 @@ void badem::uint128_union::encode_hex (std::string & text) const
 {
 	assert (text.empty ());
 	std::stringstream stream;
-	stream << std::hex << std::noshowbase << std::setw (32) << std::setfill ('0');
+	stream << std::hex << std::uppercase << std::noshowbase << std::setw (32) << std::setfill ('0');
 	stream << number ();
 	text = stream.str ();
 }
@@ -769,6 +776,71 @@ std::string badem::uint128_union::to_string_dec () const
 	return result;
 }
 
+badem::hash_or_account::hash_or_account (uint64_t value_a) :
+raw (value_a)
+{
+}
+
+bool badem::hash_or_account::is_zero () const
+{
+	return raw.is_zero ();
+}
+
+void badem::hash_or_account::clear ()
+{
+	raw.clear ();
+}
+
+bool badem::hash_or_account::decode_hex (std::string const & text_a)
+{
+	return raw.decode_hex (text_a);
+}
+
+bool badem::hash_or_account::decode_account (std::string const & source_a)
+{
+	return account.decode_account (source_a);
+}
+
+std::string badem::hash_or_account::to_string () const
+{
+	return raw.to_string ();
+}
+
+std::string badem::hash_or_account::to_account () const
+{
+	return account.to_account ();
+}
+
+badem::hash_or_account::operator badem::block_hash const & () const
+{
+	return hash;
+}
+
+badem::hash_or_account::operator badem::account const & () const
+{
+	return account;
+}
+
+badem::hash_or_account::operator badem::uint256_union const & () const
+{
+	return raw;
+}
+
+badem::block_hash const & badem::root::previous () const
+{
+	return hash;
+}
+
+bool badem::hash_or_account::operator== (badem::hash_or_account const & hash_or_account_a) const
+{
+	return bytes == hash_or_account_a.bytes;
+}
+
+bool badem::hash_or_account::operator!= (badem::hash_or_account const & hash_or_account_a) const
+{
+	return !(*this == hash_or_account_a);
+}
+
 std::string badem::to_string_hex (uint64_t const value_a)
 {
 	std::stringstream stream;
@@ -822,7 +894,19 @@ std::string badem::to_string (double const value_a, int const precision_a)
 uint64_t badem::difficulty::from_multiplier (double const multiplier_a, uint64_t const base_difficulty_a)
 {
 	assert (multiplier_a > 0.);
-	return (-static_cast<uint64_t> ((-base_difficulty_a) / multiplier_a));
+	badem::uint128_t reverse_difficulty ((-base_difficulty_a) / multiplier_a);
+	if (reverse_difficulty > std::numeric_limits<std::uint64_t>::max ())
+	{
+		return 0;
+	}
+	else if (reverse_difficulty != 0 || base_difficulty_a == 0 || multiplier_a < 1.)
+	{
+		return -(static_cast<uint64_t> (reverse_difficulty));
+	}
+	else
+	{
+		return std::numeric_limits<std::uint64_t>::max ();
+	}
 }
 
 double badem::difficulty::to_multiplier (uint64_t const difficulty_a, uint64_t const base_difficulty_a)
@@ -834,3 +918,33 @@ double badem::difficulty::to_multiplier (uint64_t const difficulty_a, uint64_t c
 #ifdef _WIN32
 #pragma warning(pop)
 #endif
+
+badem::public_key::operator badem::link const & () const
+{
+	return reinterpret_cast<badem::link const &> (*this);
+}
+
+badem::public_key::operator badem::root const & () const
+{
+	return reinterpret_cast<badem::root const &> (*this);
+}
+
+badem::public_key::operator badem::hash_or_account const & () const
+{
+	return reinterpret_cast<badem::hash_or_account const &> (*this);
+}
+
+badem::block_hash::operator badem::link const & () const
+{
+	return reinterpret_cast<badem::link const &> (*this);
+}
+
+badem::block_hash::operator badem::root const & () const
+{
+	return reinterpret_cast<badem::root const &> (*this);
+}
+
+badem::block_hash::operator badem::hash_or_account const & () const
+{
+	return reinterpret_cast<badem::hash_or_account const &> (*this);
+}

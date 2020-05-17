@@ -26,7 +26,7 @@ badem::uint256_union badem::wallet_store::salt (badem::transaction const & trans
 
 void badem::wallet_store::wallet_key (badem::raw_key & prv_a, badem::transaction const & transaction_a)
 {
-	std::lock_guard<std::recursive_mutex> lock (mutex);
+	badem::lock_guard<std::recursive_mutex> lock (mutex);
 	badem::raw_key wallet_l;
 	wallet_key_mem.value (wallet_l);
 	badem::raw_key password_l;
@@ -55,14 +55,13 @@ void badem::wallet_store::seed_set (badem::transaction const & transaction_a, ba
 badem::public_key badem::wallet_store::deterministic_insert (badem::transaction const & transaction_a)
 {
 	auto index (deterministic_index_get (transaction_a));
-	badem::raw_key prv;
-	deterministic_key (prv, transaction_a, index);
-	badem::public_key result (badem::pub_key (prv.data));
+	auto prv = deterministic_key (transaction_a, index);
+	badem::public_key result (badem::pub_key (prv));
 	while (exists (transaction_a, result))
 	{
 		++index;
-		deterministic_key (prv, transaction_a, index);
-		result = badem::pub_key (prv.data);
+		prv = deterministic_key (transaction_a, index);
+		result = badem::pub_key (prv);
 	}
 	uint64_t marker (1);
 	marker <<= 32;
@@ -75,9 +74,8 @@ badem::public_key badem::wallet_store::deterministic_insert (badem::transaction 
 
 badem::public_key badem::wallet_store::deterministic_insert (badem::transaction const & transaction_a, uint32_t const index)
 {
-	badem::raw_key prv;
-	deterministic_key (prv, transaction_a, index);
-	badem::public_key result (badem::pub_key (prv.data));
+	auto prv = deterministic_key (transaction_a, index);
+	badem::public_key result (badem::pub_key (prv));
 	uint64_t marker (1);
 	marker <<= 32;
 	marker |= index;
@@ -85,12 +83,12 @@ badem::public_key badem::wallet_store::deterministic_insert (badem::transaction 
 	return result;
 }
 
-void badem::wallet_store::deterministic_key (badem::raw_key & prv_a, badem::transaction const & transaction_a, uint32_t index_a)
+badem::private_key badem::wallet_store::deterministic_key (badem::transaction const & transaction_a, uint32_t index_a)
 {
 	assert (valid_password (transaction_a));
 	badem::raw_key seed_l;
 	seed (seed_l, transaction_a);
-	badem::deterministic_key (seed_l.data, index_a, prv_a.data);
+	return badem::deterministic_key (seed_l, index_a);
 }
 
 uint32_t badem::wallet_store::deterministic_index_get (badem::transaction const & transaction_a)
@@ -115,7 +113,7 @@ void badem::wallet_store::deterministic_clear (badem::transaction const & transa
 		{
 			case badem::key_type::deterministic:
 			{
-				badem::uint256_union const & key (i->first);
+				auto const & key (i->first);
 				erase (transaction_a, key);
 				i = begin (transaction_a, key);
 				break;
@@ -146,7 +144,7 @@ bool badem::wallet_store::attempt_password (badem::transaction const & transacti
 {
 	bool result = false;
 	{
-		std::lock_guard<std::recursive_mutex> lock (mutex);
+		badem::lock_guard<std::recursive_mutex> lock (mutex);
 		badem::raw_key password_l;
 		derive_key (password_l, transaction_a, password_a);
 		password.value_set (password_l);
@@ -173,7 +171,7 @@ bool badem::wallet_store::attempt_password (badem::transaction const & transacti
 
 bool badem::wallet_store::rekey (badem::transaction const & transaction_a, std::string const & password_a)
 {
-	std::lock_guard<std::recursive_mutex> lock (mutex);
+	badem::lock_guard<std::recursive_mutex> lock (mutex);
 	bool result (false);
 	if (valid_password (transaction_a))
 	{
@@ -219,7 +217,7 @@ badem::fan::fan (badem::uint256_union const & key, size_t count_a)
 
 void badem::fan::value (badem::raw_key & prv_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	value_get (prv_a);
 }
 
@@ -235,7 +233,7 @@ void badem::fan::value_get (badem::raw_key & prv_a)
 
 void badem::fan::value_set (badem::raw_key const & value_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	badem::raw_key value_l;
 	value_get (value_l);
 	*(values[0]) ^= value_l.data;
@@ -243,19 +241,19 @@ void badem::fan::value_set (badem::raw_key const & value_a)
 }
 
 // Wallet version number
-badem::uint256_union const badem::wallet_store::version_special (0);
+badem::account const badem::wallet_store::version_special (0);
 // Random number used to salt private key encryption
-badem::uint256_union const badem::wallet_store::salt_special (1);
+badem::account const badem::wallet_store::salt_special (1);
 // Key used to encrypt wallet keys, encrypted itself by the user password
-badem::uint256_union const badem::wallet_store::wallet_key_special (2);
+badem::account const badem::wallet_store::wallet_key_special (2);
 // Check value used to see if password is valid
-badem::uint256_union const badem::wallet_store::check_special (3);
+badem::account const badem::wallet_store::check_special (3);
 // Representative account to be used if we open a new account
-badem::uint256_union const badem::wallet_store::representative_special (4);
+badem::account const badem::wallet_store::representative_special (4);
 // Wallet seed for deterministic key generation
-badem::uint256_union const badem::wallet_store::seed_special (5);
+badem::account const badem::wallet_store::seed_special (5);
 // Current key index for deterministic keys
-badem::uint256_union const badem::wallet_store::deterministic_index_special (6);
+badem::account const badem::wallet_store::deterministic_index_special (6);
 int const badem::wallet_store::special_count (7);
 size_t const badem::wallet_store::check_iv_index (0);
 size_t const badem::wallet_store::seed_iv_index (1);
@@ -283,7 +281,7 @@ kdf (kdf_a)
 		}
 		for (auto i (wallet_l.begin ()), n (wallet_l.end ()); i != n; ++i)
 		{
-			badem::uint256_union key;
+			badem::account key;
 			init_a = key.decode_hex (i->first);
 			if (!init_a)
 			{
@@ -396,34 +394,39 @@ void badem::wallet_store::representative_set (badem::transaction const & transac
 badem::account badem::wallet_store::representative (badem::transaction const & transaction_a)
 {
 	badem::wallet_value value (entry_get_raw (transaction_a, badem::wallet_store::representative_special));
-	return value.key;
+	return reinterpret_cast<badem::account const &> (value.key);
 }
 
 badem::public_key badem::wallet_store::insert_adhoc (badem::transaction const & transaction_a, badem::raw_key const & prv)
 {
 	assert (valid_password (transaction_a));
-	badem::public_key pub (badem::pub_key (prv.data));
+	badem::public_key pub (badem::pub_key (prv.as_private_key ()));
 	badem::raw_key password_l;
 	wallet_key (password_l, transaction_a);
-	badem::uint256_union ciphertext;
+	badem::private_key ciphertext;
 	ciphertext.encrypt (prv, password_l, pub.owords[0].number ());
 	entry_put_raw (transaction_a, pub, badem::wallet_value (ciphertext, 0));
 	return pub;
 }
 
-void badem::wallet_store::insert_watch (badem::transaction const & transaction_a, badem::public_key const & pub)
+bool badem::wallet_store::insert_watch (badem::transaction const & transaction_a, badem::account const & pub_a)
 {
-	entry_put_raw (transaction_a, pub, badem::wallet_value (badem::uint256_union (0), 0));
+	bool error (!valid_public_key (pub_a));
+	if (!error)
+	{
+		entry_put_raw (transaction_a, pub_a, badem::wallet_value (badem::private_key (0), 0));
+	}
+	return error;
 }
 
-void badem::wallet_store::erase (badem::transaction const & transaction_a, badem::public_key const & pub)
+void badem::wallet_store::erase (badem::transaction const & transaction_a, badem::account const & pub)
 {
 	auto status (mdb_del (tx (transaction_a), handle, badem::mdb_val (pub), nullptr));
 	(void)status;
 	assert (status == 0);
 }
 
-badem::wallet_value badem::wallet_store::entry_get_raw (badem::transaction const & transaction_a, badem::public_key const & pub_a)
+badem::wallet_value badem::wallet_store::entry_get_raw (badem::transaction const & transaction_a, badem::account const & pub_a)
 {
 	badem::wallet_value result;
 	badem::mdb_val value;
@@ -440,7 +443,7 @@ badem::wallet_value badem::wallet_store::entry_get_raw (badem::transaction const
 	return result;
 }
 
-void badem::wallet_store::entry_put_raw (badem::transaction const & transaction_a, badem::public_key const & pub_a, badem::wallet_value const & entry_a)
+void badem::wallet_store::entry_put_raw (badem::transaction const & transaction_a, badem::account const & pub_a, badem::wallet_value const & entry_a)
 {
 	auto status (mdb_put (tx (transaction_a), handle, badem::mdb_val (pub_a), badem::mdb_val (sizeof (entry_a), const_cast<badem::wallet_value *> (&entry_a)), 0));
 	(void)status;
@@ -470,7 +473,7 @@ badem::key_type badem::wallet_store::key_type (badem::wallet_value const & value
 	return result;
 }
 
-bool badem::wallet_store::fetch (badem::transaction const & transaction_a, badem::public_key const & pub, badem::raw_key & prv)
+bool badem::wallet_store::fetch (badem::transaction const & transaction_a, badem::account const & pub, badem::raw_key & prv)
 {
 	auto result (false);
 	if (valid_password (transaction_a))
@@ -485,7 +488,7 @@ bool badem::wallet_store::fetch (badem::transaction const & transaction_a, badem
 					badem::raw_key seed_l;
 					seed (seed_l, transaction_a);
 					uint32_t index (static_cast<uint32_t> (value.key.number () & static_cast<uint32_t> (-1)));
-					deterministic_key (prv, transaction_a, index);
+					prv.data = deterministic_key (transaction_a, index);
 					break;
 				}
 				case badem::key_type::adhoc:
@@ -514,7 +517,7 @@ bool badem::wallet_store::fetch (badem::transaction const & transaction_a, badem
 	}
 	if (!result)
 	{
-		badem::public_key compare (badem::pub_key (prv.data));
+		badem::public_key compare (badem::pub_key (prv.as_private_key ()));
 		if (!(pub == compare))
 		{
 			result = true;
@@ -523,9 +526,14 @@ bool badem::wallet_store::fetch (badem::transaction const & transaction_a, badem
 	return result;
 }
 
+bool badem::wallet_store::valid_public_key (badem::public_key const & pub)
+{
+	return pub.number () >= special_count;
+}
+
 bool badem::wallet_store::exists (badem::transaction const & transaction_a, badem::public_key const & pub)
 {
-	return !pub.is_zero () && find (transaction_a, pub) != end ();
+	return valid_public_key (pub) && find (transaction_a, pub) != end ();
 }
 
 void badem::wallet_store::serialize_json (badem::transaction const & transaction_a, std::string & string_a)
@@ -583,7 +591,7 @@ bool badem::wallet_store::import (badem::transaction const & transaction_a, bade
 	for (auto i (other_a.begin (transaction_a)), n (end ()); i != n; ++i)
 	{
 		badem::raw_key prv;
-		auto error (other_a.fetch (transaction_a, badem::uint256_union (i->first), prv));
+		auto error (other_a.fetch (transaction_a, i->first, prv));
 		result = result | error;
 		if (!result)
 		{
@@ -593,9 +601,9 @@ bool badem::wallet_store::import (badem::transaction const & transaction_a, bade
 			}
 			else
 			{
-				insert_watch (transaction_a, badem::uint256_union (i->first));
+				insert_watch (transaction_a, i->first);
 			}
-			other_a.erase (transaction_a, badem::uint256_union (i->first));
+			other_a.erase (transaction_a, i->first);
 		}
 	}
 	return result;
@@ -658,7 +666,7 @@ void badem::wallet_store::upgrade_v1_v2 (badem::transaction const & transaction_
 			// Key failed to decrypt despite valid password
 			badem::wallet_value data (entry_get_raw (transaction_a, key));
 			prv.decrypt (data.key, zero_password, salt (transaction_a).owords[0]);
-			badem::public_key compare (badem::pub_key (prv.data));
+			badem::public_key compare (badem::pub_key (prv.as_private_key ()));
 			if (compare == key)
 			{
 				// If we successfully decrypted it, rewrite the key back with the correct wallet key
@@ -669,7 +677,7 @@ void badem::wallet_store::upgrade_v1_v2 (badem::transaction const & transaction_
 				// Also try the empty password
 				badem::wallet_value data (entry_get_raw (transaction_a, key));
 				prv.decrypt (data.key, empty_password, salt (transaction_a).owords[0]);
-				badem::public_key compare (badem::pub_key (prv.data));
+				badem::public_key compare (badem::pub_key (prv.as_private_key ()));
 				if (compare == key)
 				{
 					// If we successfully decrypted it, rewrite the key back with the correct wallet key
@@ -737,7 +745,7 @@ void badem::wallet_store::upgrade_v3_v4 (badem::transaction const & transaction_
 void badem::kdf::phs (badem::raw_key & result_a, std::string const & password_a, badem::uint256_union const & salt_a)
 {
 	static badem::network_params network_params;
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	auto success (argon2_hash (1, network_params.kdf_work, 1, password_a.data (), password_a.size (), salt_a.bytes.data (), salt_a.bytes.size (), result_a.data.bytes.data (), result_a.data.bytes.size (), NULL, 0, Argon2_d, 0x10));
 	assert (success == 0);
 	(void)success;
@@ -761,7 +769,7 @@ void badem::wallet::enter_initial_password ()
 {
 	badem::raw_key password_l;
 	{
-		std::lock_guard<std::recursive_mutex> lock (store.mutex);
+		badem::lock_guard<std::recursive_mutex> lock (store.mutex);
 		store.password.value (password_l);
 	}
 	if (password_l.data.is_zero ())
@@ -808,12 +816,11 @@ badem::public_key badem::wallet::deterministic_insert (badem::transaction const 
 		{
 			work_ensure (key, key);
 		}
-		auto block_transaction (wallets.node.store.tx_begin_read ());
-		if (wallets.node.ledger.weight (block_transaction, key) >= wallets.node.config.vote_minimum.number ())
+		auto half_principal_weight (wallets.node.minimum_principal_weight () / 2);
+		if (wallets.check_rep (key, half_principal_weight))
 		{
-			std::lock_guard<std::mutex> lock (representatives_mutex);
+			badem::lock_guard<std::mutex> lock (representatives_mutex);
 			representatives.insert (key);
-			++wallets.reps_count;
 		}
 	}
 	return key;
@@ -852,11 +859,11 @@ badem::public_key badem::wallet::insert_adhoc (badem::transaction const & transa
 		{
 			work_ensure (key, wallets.node.ledger.latest_root (block_transaction, key));
 		}
-		if (wallets.node.ledger.weight (block_transaction, key) >= wallets.node.config.vote_minimum.number ())
+		auto half_principal_weight (wallets.node.minimum_principal_weight () / 2);
+		if (wallets.check_rep (key, half_principal_weight))
 		{
-			std::lock_guard<std::mutex> lock (representatives_mutex);
+			badem::lock_guard<std::mutex> lock (representatives_mutex);
 			representatives.insert (key);
-			++wallets.reps_count;
 		}
 	}
 	return key;
@@ -869,9 +876,9 @@ badem::public_key badem::wallet::insert_adhoc (badem::raw_key const & account_a,
 	return result;
 }
 
-void badem::wallet::insert_watch (badem::transaction const & transaction_a, badem::public_key const & pub_a)
+bool badem::wallet::insert_watch (badem::transaction const & transaction_a, badem::public_key const & pub_a)
 {
-	store.insert_watch (transaction_a, pub_a);
+	return store.insert_watch (transaction_a, pub_a);
 }
 
 bool badem::wallet::exists (badem::public_key const & account_a)
@@ -944,13 +951,11 @@ std::shared_ptr<badem::block> badem::wallet::receive_action (badem::block const 
 					auto new_account (wallets.node.ledger.store.account_get (block_transaction, account, info));
 					if (!new_account)
 					{
-						std::shared_ptr<badem::block> rep_block = wallets.node.ledger.store.block_get (block_transaction, info.rep_block);
-						assert (rep_block != nullptr);
-						block.reset (new badem::state_block (account, info.head, rep_block->representative (), info.balance.number () + pending_info.amount.number (), hash, prv, account, work_a));
+						block.reset (new badem::state_block (account, info.head, info.representative, info.balance.number () + pending_info.amount.number (), hash, prv, account, work_a));
 					}
 					else
 					{
-						block.reset (new badem::state_block (account, 0, representative_a, pending_info.amount, hash, prv, account, work_a));
+						block.reset (new badem::state_block (account, 0, representative_a, pending_info.amount, reinterpret_cast<badem::link const &> (hash), prv, account, work_a));
 					}
 				}
 				else
@@ -975,20 +980,9 @@ std::shared_ptr<badem::block> badem::wallet::receive_action (badem::block const 
 	}
 	if (block != nullptr)
 	{
-		if (badem::work_validate (*block))
+		if (action_complete (block, account, generate_work_a))
 		{
-			wallets.node.logger.try_log (boost::str (boost::format ("Cached or provided work for block %1% account %2% is invalid, regenerating") % block->hash ().to_string () % account.to_account ()));
-			wallets.node.work_generate_blocking (*block, wallets.node.active.active_difficulty ());
-		}
-		wallets.watcher.add (block);
-		bool error (wallets.node.process_local (block).code != badem::process_result::progress);
-		if (!error && generate_work_a)
-		{
-			work_ensure (account, block->hash ());
-		}
-		// Return null block after ledger process error
-		if (error)
-		{
+			// Return null block after work generation or ledger process error
 			block = nullptr;
 		}
 	}
@@ -1024,20 +1018,9 @@ std::shared_ptr<badem::block> badem::wallet::change_action (badem::account const
 	}
 	if (block != nullptr)
 	{
-		if (badem::work_validate (*block))
+		if (action_complete (block, source_a, generate_work_a))
 		{
-			wallets.node.logger.try_log (boost::str (boost::format ("Cached or provided work for block %1% account %2% is invalid, regenerating") % block->hash ().to_string () % source_a.to_account ()));
-			wallets.node.work_generate_blocking (*block, wallets.node.active.active_difficulty ());
-		}
-		wallets.watcher.add (block);
-		bool error (wallets.node.process_local (block).code != badem::process_result::progress);
-		if (!error && generate_work_a)
-		{
-			work_ensure (source_a, block->hash ());
-		}
-		// Return null block after ledger process error
-		if (error)
-		{
+			// Return null block after work generation or ledger process error
 			block = nullptr;
 		}
 	}
@@ -1064,7 +1047,7 @@ std::shared_ptr<badem::block> badem::wallet::send_action (badem::account const &
 			auto status (mdb_get (wallets.env.tx (transaction), wallets.node.wallets.send_action_ids, *id_mdb_val, result));
 			if (status == 0)
 			{
-				badem::uint256_union hash (result);
+				badem::block_hash hash (result);
 				block = wallets.node.store.block_get (block_transaction, hash);
 				if (block != nullptr)
 				{
@@ -1095,13 +1078,11 @@ std::shared_ptr<badem::block> badem::wallet::send_action (badem::account const &
 						auto error2 (store.fetch (transaction, source_a, prv));
 						(void)error2;
 						assert (!error2);
-						std::shared_ptr<badem::block> rep_block = wallets.node.ledger.store.block_get (block_transaction, info.rep_block);
-						assert (rep_block != nullptr);
 						if (work_a == 0)
 						{
 							store.work_get (transaction, source_a, work_a);
 						}
-						block.reset (new badem::state_block (source_a, info.head, rep_block->representative (), balance - amount_a, account_a, prv, source_a, work_a));
+						block.reset (new badem::state_block (source_a, info.head, info.representative, balance - amount_a, account_a, prv, source_a, work_a));
 						if (id_mdb_val && block != nullptr)
 						{
 							auto status (mdb_put (wallets.env.tx (transaction), wallets.node.wallets.send_action_ids, *id_mdb_val, badem::mdb_val (block->hash ()), 0));
@@ -1138,24 +1119,36 @@ std::shared_ptr<badem::block> badem::wallet::send_action (badem::account const &
 
 	if (!error && block != nullptr && !cached_block)
 	{
-		if (badem::work_validate (*block))
+		if (action_complete (block, source_a, generate_work_a))
 		{
-			wallets.node.logger.try_log (boost::str (boost::format ("Cached or provided work for block %1% account %2% is invalid, regenerating") % block->hash ().to_string () % account_a.to_account ()));
-			wallets.node.work_generate_blocking (*block, wallets.node.active.active_difficulty ());
-		}
-		wallets.watcher.add (block);
-		error = (wallets.node.process_local (block).code != badem::process_result::progress);
-		if (!error && generate_work_a)
-		{
-			work_ensure (source_a, block->hash ());
-		}
-		// Return null block after ledger process error
-		if (error)
-		{
+			// Return null block after work generation or ledger process error
 			block = nullptr;
 		}
 	}
 	return block;
+}
+
+bool badem::wallet::action_complete (std::shared_ptr<badem::block> const & block_a, badem::account const & account_a, bool const generate_work_a)
+{
+	bool error{ false };
+	if (block_a != nullptr)
+	{
+		if (badem::work_validate (*block_a))
+		{
+			wallets.node.logger.try_log (boost::str (boost::format ("Cached or provided work for block %1% account %2% is invalid, regenerating") % block_a->hash ().to_string () % account_a.to_account ()));
+			error = !wallets.node.work_generate_blocking (*block_a, wallets.node.active.limited_active_difficulty ()).is_initialized ();
+		}
+		if (!error)
+		{
+			wallets.watcher->add (block_a);
+			error = wallets.node.process_local (block_a).code != badem::process_result::progress;
+		}
+		if (!error && generate_work_a)
+		{
+			work_ensure (account_a, block_a->hash ());
+		}
+	}
+	return error;
 }
 
 bool badem::wallet::change_sync (badem::account const & source_a, badem::account const & representative_a)
@@ -1225,7 +1218,7 @@ void badem::wallet::send_async (badem::account const & source_a, badem::account 
 }
 
 // Update work for account if latest root is root_a
-void badem::wallet::work_update (badem::transaction const & transaction_a, badem::account const & account_a, badem::block_hash const & root_a, uint64_t work_a)
+void badem::wallet::work_update (badem::transaction const & transaction_a, badem::account const & account_a, badem::root const & root_a, uint64_t work_a)
 {
 	assert (!badem::work_validate (root_a, work_a));
 	assert (store.exists (transaction_a, account_a));
@@ -1241,10 +1234,10 @@ void badem::wallet::work_update (badem::transaction const & transaction_a, badem
 	}
 }
 
-void badem::wallet::work_ensure (badem::account const & account_a, badem::block_hash const & hash_a)
+void badem::wallet::work_ensure (badem::account const & account_a, badem::root const & root_a)
 {
-	wallets.node.wallets.queue_wallet_action (badem::wallets::generate_priority, shared_from_this (), [account_a, hash_a](badem::wallet & wallet_a) {
-		wallet_a.work_cache_blocking (account_a, hash_a);
+	wallets.node.wallets.queue_wallet_action (badem::wallets::generate_priority, shared_from_this (), [account_a, root_a](badem::wallet & wallet_a) {
+		wallet_a.work_cache_blocking (account_a, root_a);
 	});
 }
 
@@ -1272,7 +1265,7 @@ bool badem::wallet::search_pending ()
 					{
 						wallets.node.logger.try_log (boost::str (boost::format ("Found a pending block %1% for account %2%") % hash.to_string () % pending.source.to_account ()));
 						auto block (wallets.node.store.block_get (block_transaction, hash));
-						if (wallets.node.block_confirmed_or_being_confirmed (block_transaction, hash))
+						if (wallets.node.ledger.block_confirmed (block_transaction, hash))
 						{
 							// Receive confirmed block
 							auto node_l (wallets.node.shared ());
@@ -1304,7 +1297,7 @@ void badem::wallet::init_free_accounts (badem::transaction const & transaction_a
 	free_accounts.clear ();
 	for (auto i (store.begin (transaction_a)), n (store.end ()); i != n; ++i)
 	{
-		free_accounts.insert (badem::uint256_union (i->first));
+		free_accounts.insert (i->first);
 	}
 }
 
@@ -1313,9 +1306,8 @@ uint32_t badem::wallet::deterministic_check (badem::transaction const & transact
 	auto block_transaction (wallets.node.store.tx_begin_read ());
 	for (uint32_t i (index + 1), n (index + 64); i < n; ++i)
 	{
-		badem::raw_key prv;
-		store.deterministic_key (prv, transaction_a, i);
-		badem::keypair pair (prv.data.to_string ());
+		auto prv = store.deterministic_key (transaction_a, i);
+		badem::keypair pair (prv.to_string ());
 		// Check if account received at least 1 block
 		auto latest (wallets.node.ledger.latest (block_transaction, pair.pub));
 		if (!latest.is_zero ())
@@ -1371,34 +1363,33 @@ bool badem::wallet::live ()
 	return store.handle != 0;
 }
 
-void badem::wallet::work_cache_blocking (badem::account const & account_a, badem::block_hash const & root_a)
+void badem::wallet::work_cache_blocking (badem::account const & account_a, badem::root const & root_a)
 {
-	auto begin (std::chrono::steady_clock::now ());
-	auto work (wallets.node.work_generate_blocking (root_a));
-	if (wallets.node.config.logging.work_generation_time ())
+	if (wallets.node.work_generation_enabled ())
 	{
-		/*
-		 * The difficulty parameter is the second parameter for `work_generate_blocking()`,
-		 * currently we don't supply one so we must fetch the default value.
-		 */
-		auto difficulty (wallets.node.network_params.network.publish_threshold);
-
-		wallets.node.logger.try_log ("Work generation for ", root_a.to_string (), ", with a difficulty of ", difficulty, " complete: ", (std::chrono::duration_cast<std::chrono::microseconds> (std::chrono::steady_clock::now () - begin).count ()), " us");
-	}
-	auto transaction (wallets.tx_begin_write ());
-	if (live () && store.exists (transaction, account_a))
-	{
-		work_update (transaction, account_a, root_a, work);
+		auto opt_work_l (wallets.node.work_generate_blocking (root_a, account_a));
+		if (opt_work_l.is_initialized ())
+		{
+			auto transaction_l (wallets.tx_begin_write ());
+			if (live () && store.exists (transaction_l, account_a))
+			{
+				work_update (transaction_l, account_a, root_a, *opt_work_l);
+			}
+		}
+		else if (!wallets.node.stopped)
+		{
+			wallets.node.logger.try_log (boost::str (boost::format ("Could not precache work for root %1 due to work generation failure") % root_a.to_string ()));
+		}
 	}
 }
 
 badem::work_watcher::work_watcher (badem::node & node_a) :
 node (node_a),
-stopped (false),
-thread ([this]() {
-	badem::thread_role::set (badem::thread_role::name::work_watcher);
-	run (); })
+stopped (false)
 {
+	node.observers.blocks.add ([this](badem::election_status const & status_a, badem::account const & account_a, badem::amount const & amount_a, bool is_state_send_a) {
+		this->remove (status_a.winner);
+	});
 }
 
 badem::work_watcher::~work_watcher ()
@@ -1408,119 +1399,9 @@ badem::work_watcher::~work_watcher ()
 
 void badem::work_watcher::stop ()
 {
-	std::unique_lock<std::mutex> lock (mutex);
-	blocks.clear ();
+	badem::unique_lock<std::mutex> lock (mutex);
+	watched.clear ();
 	stopped = true;
-	condition.notify_all ();
-	lock.unlock ();
-	if (thread.joinable ())
-	{
-		thread.join ();
-	}
-}
-void badem::work_watcher::run ()
-{
-	std::unique_lock<std::mutex> lock (mutex);
-	std::chrono::steady_clock::time_point next_attempt;
-	while (!stopped)
-	{
-		condition.wait_until (lock, next_attempt, [this, &next_attempt]() {
-			return stopped || next_attempt < std::chrono::steady_clock::now ();
-		});
-		next_attempt = std::chrono::steady_clock::now () + std::chrono::seconds (5);
-		for (auto i (blocks.begin ()), n (blocks.end ()); i != n;)
-		{
-			std::unique_lock<std::mutex> active_lock (node.active.mutex);
-			auto confirmed (false);
-			auto existing (node.active.roots.find (i->first));
-			if (node.active.roots.end () != existing)
-			{
-				//block may not be in existing yet
-				confirmed = existing->election->confirmed.load ();
-			}
-			else if (i->second == nullptr)
-			{
-				// removed
-				confirmed = true;
-			}
-			else
-			{
-				//and so we fall back to ledger confirmation
-				auto transaction (this->node.store.tx_begin_read ());
-				auto block = this->node.store.block_get (transaction, (i->second)->hash ());
-				if (block)
-				{
-					confirmed = this->node.block_confirmed_or_being_confirmed (transaction, (i->second)->hash ());
-				}
-			}
-			active_lock.unlock ();
-
-			if (confirmed)
-			{
-				i = blocks.erase (i);
-			}
-			else
-			{
-				++i;
-			}
-		}
-		for (auto & i : blocks)
-		{
-			uint64_t difficulty (0);
-			badem::block_hash root (0);
-			if (i.second != nullptr)
-			{
-				root = i.second->root ();
-				badem::work_validate (root, i.second->block_work (), &difficulty);
-			}
-			if (node.active.active_difficulty () > difficulty && i.second != nullptr)
-			{
-				auto qualified_root = i.second->qualified_root ();
-				auto hash = i.second->hash ();
-				badem::state_block_builder builder;
-				std::error_code ec;
-				builder.from (*i.second);
-				lock.unlock ();
-				builder.work (node.work_generate_blocking (root, node.active.active_difficulty ()));
-				std::shared_ptr<state_block> block (builder.build (ec));
-				if (!ec)
-				{
-					{
-						std::lock_guard<std::mutex> active_lock (node.active.mutex);
-						auto existing (node.active.roots.find (qualified_root));
-						if (existing != node.active.roots.end ())
-						{
-							auto election (existing->election);
-							if (election->status.winner->hash () == hash)
-							{
-								election->status.winner = block;
-							}
-							auto current (election->blocks.find (hash));
-							assert (current != election->blocks.end ());
-							current->second = block;
-						}
-					}
-					node.network.flood_block (block, false);
-					node.active.update_difficulty (*block.get ());
-					lock.lock ();
-					if (stopped)
-					{
-						break;
-					}
-					if (i.second != nullptr)
-					{
-						i.second = block;
-					}
-					lock.unlock ();
-				}
-				lock.lock ();
-				if (stopped)
-				{
-					break;
-				}
-			}
-		}
-	} // !stopped
 }
 
 void badem::work_watcher::add (std::shared_ptr<badem::block> block_a)
@@ -1528,32 +1409,122 @@ void badem::work_watcher::add (std::shared_ptr<badem::block> block_a)
 	auto block_l (std::dynamic_pointer_cast<badem::state_block> (block_a));
 	if (!stopped && block_l != nullptr)
 	{
-		std::lock_guard<std::mutex> lock (mutex);
-		blocks[block_l->qualified_root ()] = block_l;
+		auto root_l (block_l->qualified_root ());
+		badem::unique_lock<std::mutex> lock (mutex);
+		watched[root_l] = block_l;
+		lock.unlock ();
+		watching (root_l, block_l);
 	}
+}
+
+void badem::work_watcher::update (badem::qualified_root const & root_a, std::shared_ptr<badem::state_block> block_a)
+{
+	badem::lock_guard<std::mutex> guard (mutex);
+	watched[root_a] = block_a;
+}
+
+void badem::work_watcher::watching (badem::qualified_root const & root_a, std::shared_ptr<badem::state_block> block_a)
+{
+	std::weak_ptr<badem::work_watcher> watcher_w (shared_from_this ());
+	node.alarm.add (std::chrono::steady_clock::now () + node.config.work_watcher_period, [block_a, root_a, watcher_w]() {
+		auto watcher_l = watcher_w.lock ();
+		if (watcher_l && !watcher_l->stopped && block_a != nullptr)
+		{
+			badem::unique_lock<std::mutex> lock (watcher_l->mutex);
+			if (watcher_l->watched.find (root_a) != watcher_l->watched.end ()) // not yet confirmed or cancelled
+			{
+				lock.unlock ();
+				uint64_t difficulty (0);
+				auto root_l (block_a->root ());
+				badem::work_validate (root_l, block_a->block_work (), &difficulty);
+				auto active_difficulty (watcher_l->node.active.limited_active_difficulty ());
+				/*
+				 * Work watcher should still watch blocks even without work generation, although no rework is done
+				 * Functionality may be added in the future that does not require updating work
+				 */
+				if (active_difficulty > difficulty && watcher_l->node.work_generation_enabled ())
+				{
+					watcher_l->node.work_generate (
+					root_l, [watcher_l, block_a, root_a](boost::optional<uint64_t> work_a) {
+						if (block_a != nullptr && watcher_l != nullptr && !watcher_l->stopped)
+						{
+							bool updated_l{ false };
+							if (work_a.is_initialized ())
+							{
+								badem::state_block_builder builder;
+								std::error_code ec;
+								std::shared_ptr<badem::state_block> block (builder.from (*block_a).work (*work_a).build (ec));
+
+								if (!ec)
+								{
+									{
+										auto hash (block_a->hash ());
+										badem::lock_guard<std::mutex> active_guard (watcher_l->node.active.mutex);
+										auto existing (watcher_l->node.active.roots.find (root_a));
+										if (existing != watcher_l->node.active.roots.end ())
+										{
+											auto election (existing->election);
+											if (election->status.winner->hash () == hash)
+											{
+												election->status.winner = block;
+											}
+											auto current (election->blocks.find (hash));
+											assert (current != election->blocks.end ());
+											current->second = block;
+										}
+									}
+									watcher_l->node.network.flood_block (block, false);
+									watcher_l->node.active.update_difficulty (block);
+									watcher_l->update (root_a, block);
+									updated_l = true;
+									watcher_l->watching (root_a, block);
+								}
+							}
+							if (!updated_l)
+							{
+								watcher_l->watching (root_a, block_a);
+							}
+						}
+					},
+					active_difficulty, block_a->account ());
+				}
+				else
+				{
+					watcher_l->watching (root_a, block_a);
+				}
+			}
+		}
+	});
 }
 
 void badem::work_watcher::remove (std::shared_ptr<badem::block> block_a)
 {
-	auto root (block_a->qualified_root ());
-	std::lock_guard<std::mutex> lock (mutex);
-	auto existing (blocks.find (root));
-	if (existing != blocks.end () && existing->second->hash () == block_a->hash ())
+	auto root_l (block_a->qualified_root ());
+	badem::lock_guard<std::mutex> lock (mutex);
+	auto existing (watched.find (root_l));
+	if (existing != watched.end () && existing->second->hash () == block_a->hash ())
 	{
-		existing->second = nullptr;
+		watched.erase (existing);
+		node.observers.work_cancel.notify (block_a->root ());
 	}
 }
 
 bool badem::work_watcher::is_watched (badem::qualified_root const & root_a)
 {
-	std::unique_lock<std::mutex> lock (mutex);
-	auto exists (blocks.find (root_a));
-	return exists != blocks.end ();
+	badem::lock_guard<std::mutex> guard (mutex);
+	auto exists (watched.find (root_a));
+	return exists != watched.end ();
+}
+
+size_t badem::work_watcher::size ()
+{
+	badem::lock_guard<std::mutex> guard (mutex);
+	return watched.size ();
 }
 
 void badem::wallets::do_wallet_actions ()
 {
-	std::unique_lock<std::mutex> action_lock (action_mutex);
+	badem::unique_lock<std::mutex> action_lock (action_mutex);
 	while (!stopped)
 	{
 		if (!actions.empty ())
@@ -1583,13 +1554,13 @@ observer ([](bool) {}),
 node (node_a),
 env (boost::polymorphic_downcast<badem::mdb_wallets_store *> (node_a.wallets_store_impl.get ())->environment),
 stopped (false),
-watcher (node_a),
+watcher (std::make_shared<badem::work_watcher> (node_a)),
 thread ([this]() {
 	badem::thread_role::set (badem::thread_role::name::wallet_actions);
 	do_wallet_actions ();
 })
 {
-	std::unique_lock<std::mutex> lock (mutex);
+	badem::unique_lock<std::mutex> lock (mutex);
 	if (!error_a)
 	{
 		auto transaction (tx_begin_write ());
@@ -1603,7 +1574,7 @@ thread ([this]() {
 		badem::store_iterator<std::array<char, 64>, badem::no_value> n (std::make_unique<badem::mdb_iterator<std::array<char, 64>, badem::no_value>> (transaction, handle, badem::mdb_val (end.size (), const_cast<char *> (end.c_str ()))));
 		for (; i != n; ++i)
 		{
-			badem::uint256_union id;
+			badem::wallet_id id;
 			std::string text (i->first.data (), i->first.size ());
 			auto error (id.decode_hex (text));
 			assert (!error);
@@ -1618,6 +1589,27 @@ thread ([this]() {
 				// Couldn't open wallet
 			}
 		}
+	}
+	// Backup before upgrade wallets
+	bool backup_required (false);
+	if (node.config.backup_before_upgrade)
+	{
+		auto transaction (tx_begin_read ());
+		for (auto & item : items)
+		{
+			if (item.second->store.version (transaction) != badem::wallet_store::version_current)
+			{
+				backup_required = true;
+				break;
+			}
+		}
+	}
+	if (backup_required)
+	{
+		const char * store_path;
+		mdb_env_get_path (env, &store_path);
+		const boost::filesystem::path path (store_path);
+		badem::mdb_store::create_backup_file (env, path, node_a.logger);
 	}
 	for (auto & item : items)
 	{
@@ -1635,9 +1627,9 @@ badem::wallets::~wallets ()
 	stop ();
 }
 
-std::shared_ptr<badem::wallet> badem::wallets::open (badem::uint256_union const & id_a)
+std::shared_ptr<badem::wallet> badem::wallets::open (badem::wallet_id const & id_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	std::shared_ptr<badem::wallet> result;
 	auto existing (items.find (id_a));
 	if (existing != items.end ())
@@ -1647,9 +1639,9 @@ std::shared_ptr<badem::wallet> badem::wallets::open (badem::uint256_union const 
 	return result;
 }
 
-std::shared_ptr<badem::wallet> badem::wallets::create (badem::uint256_union const & id_a)
+std::shared_ptr<badem::wallet> badem::wallets::create (badem::wallet_id const & id_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	assert (items.find (id_a) == items.end ());
 	std::shared_ptr<badem::wallet> result;
 	bool error;
@@ -1665,9 +1657,9 @@ std::shared_ptr<badem::wallet> badem::wallets::create (badem::uint256_union cons
 	return result;
 }
 
-bool badem::wallets::search_pending (badem::uint256_union const & wallet_a)
+bool badem::wallets::search_pending (badem::wallet_id const & wallet_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	auto result (false);
 	auto existing (items.find (wallet_a));
 	result = existing == items.end ();
@@ -1681,19 +1673,19 @@ bool badem::wallets::search_pending (badem::uint256_union const & wallet_a)
 
 void badem::wallets::search_pending_all ()
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	for (auto i : items)
 	{
 		i.second->search_pending ();
 	}
 }
 
-void badem::wallets::destroy (badem::uint256_union const & id_a)
+void badem::wallets::destroy (badem::wallet_id const & id_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	auto transaction (tx_begin_write ());
 	// action_mutex should be after transactions to prevent deadlocks in deterministic_insert () & insert_adhoc ()
-	std::lock_guard<std::mutex> action_lock (action_mutex);
+	badem::lock_guard<std::mutex> action_lock (action_mutex);
 	auto existing (items.find (id_a));
 	assert (existing != items.end ());
 	auto wallet (existing->second);
@@ -1703,7 +1695,7 @@ void badem::wallets::destroy (badem::uint256_union const & id_a)
 
 void badem::wallets::reload ()
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	auto transaction (tx_begin_write ());
 	std::unordered_set<badem::uint256_union> stored_items;
 	std::string beginning (badem::uint256_union (0).to_string ());
@@ -1712,7 +1704,7 @@ void badem::wallets::reload ()
 	badem::store_iterator<std::array<char, 64>, badem::no_value> n (std::make_unique<badem::mdb_iterator<std::array<char, 64>, badem::no_value>> (transaction, handle, badem::mdb_val (end.size (), const_cast<char *> (end.c_str ()))));
 	for (; i != n; ++i)
 	{
-		badem::uint256_union id;
+		badem::wallet_id id;
 		std::string text (i->first.data (), i->first.size ());
 		auto error (id.decode_hex (text));
 		assert (!error);
@@ -1729,7 +1721,7 @@ void badem::wallets::reload ()
 		stored_items.insert (id);
 	}
 	// Delete non existing wallets from memory
-	std::vector<badem::uint256_union> deleted_items;
+	std::vector<badem::wallet_id> deleted_items;
 	for (auto i : items)
 	{
 		if (stored_items.find (i.first) == stored_items.end ())
@@ -1747,29 +1739,29 @@ void badem::wallets::reload ()
 void badem::wallets::queue_wallet_action (badem::uint128_t const & amount_a, std::shared_ptr<badem::wallet> wallet_a, std::function<void(badem::wallet &)> const & action_a)
 {
 	{
-		std::lock_guard<std::mutex> action_lock (action_mutex);
+		badem::lock_guard<std::mutex> action_lock (action_mutex);
 		actions.insert (std::make_pair (amount_a, std::make_pair (wallet_a, std::move (action_a))));
 	}
 	condition.notify_all ();
 }
 
-void badem::wallets::foreach_representative (badem::transaction const & transaction_a, std::function<void(badem::public_key const & pub_a, badem::raw_key const & prv_a)> const & action_a)
+void badem::wallets::foreach_representative (std::function<void(badem::public_key const & pub_a, badem::raw_key const & prv_a)> const & action_a)
 {
 	if (node.config.enable_voting)
 	{
-		std::lock_guard<std::mutex> lock (mutex);
+		badem::lock_guard<std::mutex> lock (mutex);
 		auto transaction_l (tx_begin_read ());
 		for (auto i (items.begin ()), n (items.end ()); i != n; ++i)
 		{
 			auto & wallet (*i->second);
-			std::lock_guard<std::recursive_mutex> store_lock (wallet.store.mutex);
-			std::lock_guard<std::mutex> representatives_lock (wallet.representatives_mutex);
+			badem::lock_guard<std::recursive_mutex> store_lock (wallet.store.mutex);
+			badem::lock_guard<std::mutex> representatives_lock (wallet.representatives_mutex);
 			for (auto ii (wallet.representatives.begin ()), nn (wallet.representatives.end ()); ii != nn; ++ii)
 			{
 				badem::account account (*ii);
 				if (wallet.store.exists (transaction_l, account))
 				{
-					if (!node.ledger.weight (transaction_a, account).is_zero ())
+					if (!node.ledger.weight (account).is_zero ())
 					{
 						if (wallet.store.valid_password (transaction_l))
 						{
@@ -1795,9 +1787,9 @@ void badem::wallets::foreach_representative (badem::transaction const & transact
 	}
 }
 
-bool badem::wallets::exists (badem::transaction const & transaction_a, badem::public_key const & account_a)
+bool badem::wallets::exists (badem::transaction const & transaction_a, badem::account const & account_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	auto result (false);
 	for (auto i (items.begin ()), n (items.end ()); !result && i != n; ++i)
 	{
@@ -1809,7 +1801,7 @@ bool badem::wallets::exists (badem::transaction const & transaction_a, badem::pu
 void badem::wallets::stop ()
 {
 	{
-		std::lock_guard<std::mutex> action_lock (action_mutex);
+		badem::lock_guard<std::mutex> action_lock (action_mutex);
 		stopped = true;
 		actions.clear ();
 	}
@@ -1818,7 +1810,7 @@ void badem::wallets::stop ()
 	{
 		thread.join ();
 	}
-	watcher.stop ();
+	watcher->stop ();
 }
 
 badem::write_transaction badem::wallets::tx_begin_write ()
@@ -1838,11 +1830,28 @@ void badem::wallets::clear_send_ids (badem::transaction const & transaction_a)
 	assert (status == 0);
 }
 
+bool badem::wallets::check_rep (badem::account const & account_a, badem::uint128_t const & half_principal_weight_a)
+{
+	bool result (false);
+	auto weight (node.ledger.weight (account_a));
+	if (weight >= node.config.vote_minimum.number ())
+	{
+		result = true;
+		++reps_count;
+		if (weight >= half_principal_weight_a)
+		{
+			++half_principal_reps_count;
+		}
+	}
+	return result;
+}
+
 void badem::wallets::compute_reps ()
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	reps_count = 0;
-	auto ledger_transaction (node.store.tx_begin_read ());
+	half_principal_reps_count = 0;
+	auto half_principal_weight (node.minimum_principal_weight () / 2);
 	auto transaction (tx_begin_read ());
 	for (auto i (items.begin ()), n (items.end ()); i != n; ++i)
 	{
@@ -1851,13 +1860,12 @@ void badem::wallets::compute_reps ()
 		for (auto ii (wallet.store.begin (transaction)), nn (wallet.store.end ()); ii != nn; ++ii)
 		{
 			auto account (ii->first);
-			if (node.ledger.weight (ledger_transaction, account) >= node.config.vote_minimum.number ())
+			if (check_rep (account, half_principal_weight))
 			{
 				representatives_l.insert (account);
-				++reps_count;
 			}
 		}
-		std::lock_guard<std::mutex> representatives_lock (wallet.representatives_mutex);
+		badem::lock_guard<std::mutex> representatives_lock (wallet.representatives_mutex);
 		wallet.representatives.swap (representatives_l);
 	}
 }
@@ -1951,25 +1959,25 @@ void badem::wallets::move_table (std::string const & name_a, MDB_txn * tx_source
 badem::uint128_t const badem::wallets::generate_priority = std::numeric_limits<badem::uint128_t>::max ();
 badem::uint128_t const badem::wallets::high_priority = std::numeric_limits<badem::uint128_t>::max () - 1;
 
-badem::store_iterator<badem::uint256_union, badem::wallet_value> badem::wallet_store::begin (badem::transaction const & transaction_a)
+badem::store_iterator<badem::account, badem::wallet_value> badem::wallet_store::begin (badem::transaction const & transaction_a)
 {
-	badem::store_iterator<badem::uint256_union, badem::wallet_value> result (std::make_unique<badem::mdb_iterator<badem::uint256_union, badem::wallet_value>> (transaction_a, handle, badem::mdb_val (badem::uint256_union (special_count))));
+	badem::store_iterator<badem::account, badem::wallet_value> result (std::make_unique<badem::mdb_iterator<badem::account, badem::wallet_value>> (transaction_a, handle, badem::mdb_val (badem::account (special_count))));
 	return result;
 }
 
-badem::store_iterator<badem::uint256_union, badem::wallet_value> badem::wallet_store::begin (badem::transaction const & transaction_a, badem::uint256_union const & key)
+badem::store_iterator<badem::account, badem::wallet_value> badem::wallet_store::begin (badem::transaction const & transaction_a, badem::account const & key)
 {
-	badem::store_iterator<badem::uint256_union, badem::wallet_value> result (std::make_unique<badem::mdb_iterator<badem::uint256_union, badem::wallet_value>> (transaction_a, handle, badem::mdb_val (key)));
+	badem::store_iterator<badem::account, badem::wallet_value> result (std::make_unique<badem::mdb_iterator<badem::account, badem::wallet_value>> (transaction_a, handle, badem::mdb_val (key)));
 	return result;
 }
 
-badem::store_iterator<badem::uint256_union, badem::wallet_value> badem::wallet_store::find (badem::transaction const & transaction_a, badem::uint256_union const & key)
+badem::store_iterator<badem::account, badem::wallet_value> badem::wallet_store::find (badem::transaction const & transaction_a, badem::account const & key)
 {
 	auto result (begin (transaction_a, key));
-	badem::store_iterator<badem::uint256_union, badem::wallet_value> end (nullptr);
+	badem::store_iterator<badem::account, badem::wallet_value> end (nullptr);
 	if (result != end)
 	{
-		if (badem::uint256_union (result->first) == key)
+		if (result->first == key)
 		{
 			return result;
 		}
@@ -1985,14 +1993,20 @@ badem::store_iterator<badem::uint256_union, badem::wallet_value> badem::wallet_s
 	return result;
 }
 
-badem::store_iterator<badem::uint256_union, badem::wallet_value> badem::wallet_store::end ()
+badem::store_iterator<badem::account, badem::wallet_value> badem::wallet_store::end ()
 {
-	return badem::store_iterator<badem::uint256_union, badem::wallet_value> (nullptr);
+	return badem::store_iterator<badem::account, badem::wallet_value> (nullptr);
 }
-badem::mdb_wallets_store::mdb_wallets_store (bool & error_a, boost::filesystem::path const & path_a, int lmdb_max_dbs) :
-environment (error_a, path_a, lmdb_max_dbs, false, 1ULL * 1024 * 1024 * 1024)
+badem::mdb_wallets_store::mdb_wallets_store (boost::filesystem::path const & path_a, int lmdb_max_dbs) :
+environment (error, path_a, lmdb_max_dbs, false, 1ULL * 1024 * 1024 * 1024)
 {
 }
+
+bool badem::mdb_wallets_store::init_error () const
+{
+	return error;
+}
+
 MDB_txn * badem::wallet_store::tx (badem::transaction const & transaction_a) const
 {
 	return static_cast<MDB_txn *> (transaction_a.get_handle ());
@@ -2005,7 +2019,7 @@ std::unique_ptr<seq_con_info_component> collect_seq_con_info (wallets & wallets,
 	size_t items_count = 0;
 	size_t actions_count = 0;
 	{
-		std::lock_guard<std::mutex> guard (wallets.mutex);
+		badem::lock_guard<std::mutex> guard (wallets.mutex);
 		items_count = wallets.items.size ();
 		actions_count = wallets.actions.size ();
 	}
@@ -2013,8 +2027,10 @@ std::unique_ptr<seq_con_info_component> collect_seq_con_info (wallets & wallets,
 	auto composite = std::make_unique<seq_con_info_composite> (name);
 	auto sizeof_item_element = sizeof (decltype (wallets.items)::value_type);
 	auto sizeof_actions_element = sizeof (decltype (wallets.actions)::value_type);
+	auto sizeof_watcher_element = sizeof (decltype (wallets.watcher->watched)::value_type);
 	composite->add_component (std::make_unique<seq_con_info_leaf> (seq_con_info{ "items", items_count, sizeof_item_element }));
-	composite->add_component (std::make_unique<seq_con_info_leaf> (seq_con_info{ "actions_count", actions_count, sizeof_actions_element }));
+	composite->add_component (std::make_unique<seq_con_info_leaf> (seq_con_info{ "actions", actions_count, sizeof_actions_element }));
+	composite->add_component (std::make_unique<seq_con_info_leaf> (seq_con_info{ "work_watcher", wallets.watcher->size (), sizeof_watcher_element }));
 	return composite;
 }
 }

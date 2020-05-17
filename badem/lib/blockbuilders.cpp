@@ -244,93 +244,93 @@ badem::state_block_builder & badem::state_block_builder::zero ()
 	return *this;
 }
 
-badem::state_block_builder & badem::state_block_builder::account (badem::account account)
+badem::state_block_builder & badem::state_block_builder::account (badem::account const & account)
 {
 	block->hashables.account = account;
 	build_state |= build_flags::account_present;
 	return *this;
 }
 
-badem::state_block_builder & badem::state_block_builder::account_hex (std::string account_hex)
+badem::state_block_builder & badem::state_block_builder::account_hex (std::string const & account_hex)
 {
 	account_hex_impl (account_hex, ec, block);
 	build_state |= build_flags::account_present;
 	return *this;
 }
 
-badem::state_block_builder & badem::state_block_builder::account_address (std::string address)
+badem::state_block_builder & badem::state_block_builder::account_address (std::string const & address)
 {
 	account_address_impl (address, ec, block);
 	build_state |= build_flags::account_present;
 	return *this;
 }
 
-badem::state_block_builder & badem::state_block_builder::representative (badem::account account)
+badem::state_block_builder & badem::state_block_builder::representative (badem::account const & account)
 {
 	block->hashables.representative = account;
 	build_state |= build_flags::representative_present;
 	return *this;
 }
 
-badem::state_block_builder & badem::state_block_builder::representative_hex (std::string account_hex)
+badem::state_block_builder & badem::state_block_builder::representative_hex (std::string const & account_hex)
 {
 	representative_hex_impl (account_hex, ec, block);
 	build_state |= build_flags::representative_present;
 	return *this;
 }
 
-badem::state_block_builder & badem::state_block_builder::representative_address (std::string address)
+badem::state_block_builder & badem::state_block_builder::representative_address (std::string const & address)
 {
 	representative_address_impl (address, ec, block);
 	build_state |= build_flags::representative_present;
 	return *this;
 }
 
-badem::state_block_builder & badem::state_block_builder::previous (badem::block_hash previous)
+badem::state_block_builder & badem::state_block_builder::previous (badem::block_hash const & previous)
 {
 	block->hashables.previous = previous;
 	build_state |= build_flags::previous_present;
 	return *this;
 }
 
-badem::state_block_builder & badem::state_block_builder::previous_hex (std::string previous_hex)
+badem::state_block_builder & badem::state_block_builder::previous_hex (std::string const & previous_hex)
 {
 	previous_hex_impl (previous_hex, ec, block);
 	build_state |= build_flags::previous_present;
 	return *this;
 }
 
-badem::state_block_builder & badem::state_block_builder::balance (badem::amount balance)
+badem::state_block_builder & badem::state_block_builder::balance (badem::amount const & balance)
 {
 	block->hashables.balance = balance;
 	build_state |= build_flags::balance_present;
 	return *this;
 }
 
-badem::state_block_builder & badem::state_block_builder::balance_dec (std::string balance_decimal)
+badem::state_block_builder & badem::state_block_builder::balance_dec (std::string const & balance_decimal)
 {
 	balance_dec_impl (balance_decimal, ec, block);
 	build_state |= build_flags::balance_present;
 	return *this;
 }
 
-badem::state_block_builder & badem::state_block_builder::balance_hex (std::string balance_hex)
+badem::state_block_builder & badem::state_block_builder::balance_hex (std::string const & balance_hex)
 {
 	balance_hex_impl (balance_hex, ec, block);
 	build_state |= build_flags::balance_present;
 	return *this;
 }
 
-badem::state_block_builder & badem::state_block_builder::link (badem::uint256_union link)
+badem::state_block_builder & badem::state_block_builder::link (badem::link const & link)
 {
 	block->hashables.link = link;
 	build_state |= build_flags::link_present;
 	return *this;
 }
 
-badem::state_block_builder & badem::state_block_builder::link_hex (std::string link_hex)
+badem::state_block_builder & badem::state_block_builder::link_hex (std::string const & link_hex)
 {
-	badem::uint256_union link;
+	badem::link link;
 	if (!link.decode_hex (link_hex))
 	{
 		block->hashables.link = link;
@@ -343,9 +343,9 @@ badem::state_block_builder & badem::state_block_builder::link_hex (std::string l
 	return *this;
 }
 
-badem::state_block_builder & badem::state_block_builder::link_address (std::string link_address)
+badem::state_block_builder & badem::state_block_builder::link_address (std::string const & link_address)
 {
-	badem::account link;
+	badem::link link;
 	if (!link.decode_account (link_address))
 	{
 		block->hashables.link = link;

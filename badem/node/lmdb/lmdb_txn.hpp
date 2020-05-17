@@ -1,7 +1,7 @@
 #pragma once
 
+#include <badem/lib/diagnosticsconfig.hpp>
 #include <badem/lib/timer.hpp>
-#include <badem/node/diagnosticsconfig.hpp>
 #include <badem/secure/blockstore.hpp>
 
 #include <boost/property_tree/ptree.hpp>
@@ -46,6 +46,7 @@ public:
 	void commit () const override;
 	void renew () override;
 	void * get_handle () const override;
+	bool contains (badem::tables table_a) const override;
 	MDB_txn * handle;
 	badem::mdb_env const & env;
 	mdb_txn_callbacks txn_callbacks;

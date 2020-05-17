@@ -1,11 +1,12 @@
 #pragma once
 
 #include <badem/lib/config.hpp>
+#include <badem/lib/diagnosticsconfig.hpp>
 #include <badem/lib/errors.hpp>
 #include <badem/lib/jsonconfig.hpp>
 #include <badem/lib/numbers.hpp>
+#include <badem/lib/rocksdbconfig.hpp>
 #include <badem/lib/stats.hpp>
-#include <badem/node/diagnosticsconfig.hpp>
 #include <badem/node/ipcconfig.hpp>
 #include <badem/node/logging.hpp>
 #include <badem/node/websocketconfig.hpp>
@@ -16,6 +17,16 @@
 
 namespace badem
 {
+class tomlconfig;
+
+enum class frontiers_confirmation_mode : uint8_t
+{
+	always, // Always confirm frontiers
+	automatic, // Always mode if node contains representative with at least 50% of principal weight, less frequest requests if not
+	disabled, // Do not confirm frontiers
+	invalid
+};
+
 /**
  * Node configuration
  */
@@ -26,20 +37,23 @@ public:
 	node_config (uint16_t, badem::logging const &);
 	badem::error serialize_json (badem::jsonconfig &) const;
 	badem::error deserialize_json (bool &, badem::jsonconfig &);
+	badem::error serialize_toml (badem::tomlconfig &) const;
+	badem::error deserialize_toml (badem::tomlconfig &);
 	bool upgrade_json (unsigned, badem::jsonconfig &);
-	badem::account random_representative ();
+	badem::account random_representative () const;
 	badem::network_params network_params;
 	uint16_t peering_port{ 0 };
 	badem::logging logging;
 	std::vector<std::pair<std::string, uint16_t>> work_peers;
+	std::vector<std::pair<std::string, uint16_t>> secondary_work_peers{ { "127.0.0.1", 8076 } }; /* Default of nano-pow-server */
 	std::vector<std::string> preconfigured_peers;
 	std::vector<badem::account> preconfigured_representatives;
 	unsigned bootstrap_fraction_numerator{ 1 };
-	badem::amount receive_minimum{ badem::RAW_ratio };
-	badem::amount vote_minimum{ badem::kBDM_ratio };
+	badem::amount receive_minimum{ badem::bdm_ratio };
+	badem::amount vote_minimum{ badem::Gbdm_ratio };
 	std::chrono::milliseconds vote_generator_delay{ std::chrono::milliseconds (100) };
 	unsigned vote_generator_threshold{ 3 };
-	badem::amount online_weight_minimum{ 60000 * badem::kBDM_ratio };
+	badem::amount online_weight_minimum{ 60000 * badem::Gbdm_ratio };
 	unsigned online_weight_quorum{ 50 };
 	unsigned password_fanout{ 1024 };
 	unsigned io_threads{ std::max<unsigned> (4, boost::thread::hardware_concurrency ()) };
@@ -59,8 +73,6 @@ public:
 	bool allow_local_peers{ !network_params.network.is_live_network () }; // disable by default for live network
 	badem::stat_config stat_config;
 	badem::ipc::ipc_config ipc_config;
-	badem::uint256_union epoch_block_link;
-	badem::account epoch_block_signer;
 	boost::asio::ip::address_v6 external_address{ boost::asio::ip::address_v6{} };
 	uint16_t external_port{ 0 };
 	std::chrono::milliseconds block_processor_batch_max_time{ std::chrono::milliseconds (5000) };
@@ -68,15 +80,26 @@ public:
 	/** Timeout for initiated async operations */
 	std::chrono::seconds tcp_io_timeout{ (network_params.network.is_test_network () && !is_sanitizer_build) ? std::chrono::seconds (5) : std::chrono::seconds (15) };
 	std::chrono::nanoseconds pow_sleep_interval{ 0 };
-	size_t active_elections_size{ 50000 };
+	size_t active_elections_size{ 10000 };
 	/** Default maximum incoming TCP connections, including realtime network & bootstrap */
 	unsigned tcp_incoming_connections_max{ 1024 };
 	bool use_memory_pools{ true };
 	static std::chrono::seconds constexpr keepalive_period = std::chrono::seconds (60);
 	static std::chrono::seconds constexpr keepalive_cutoff = keepalive_period * 5;
 	static std::chrono::minutes constexpr wallet_backup_interval = std::chrono::minutes (5);
-	size_t bandwidth_limit{ 5 * 1024 * 1024 }; // 5Mb/s
+	size_t bandwidth_limit{ 5 * 1024 * 1024 }; // 5MB/s
 	std::chrono::milliseconds conf_height_processor_batch_min_time{ 50 };
+	bool backup_before_upgrade{ false };
+	std::chrono::seconds work_watcher_period{ std::chrono::seconds (5) };
+	double max_work_generate_multiplier{ 64. };
+	uint64_t max_work_generate_difficulty{ badem::network_constants::publish_full_threshold };
+	badem::rocksdb_config rocksdb_config;
+	badem::frontiers_confirmation_mode frontiers_confirmation{ badem::frontiers_confirmation_mode::automatic };
+	std::string serialize_frontiers_confirmation (badem::frontiers_confirmation_mode) const;
+	badem::frontiers_confirmation_mode deserialize_frontiers_confirmation (std::string const &);
+	/** Entry is ignored if it cannot be parsed as a valid address:port */
+	void deserialize_address (std::string const &, std::vector<std::pair<std::string, uint16_t>> &) const;
+
 	static unsigned json_version ()
 	{
 		return 18;
@@ -86,18 +109,26 @@ public:
 class node_flags final
 {
 public:
+	std::vector<std::string> config_overrides;
 	bool disable_backup{ false };
 	bool disable_lazy_bootstrap{ false };
 	bool disable_legacy_bootstrap{ false };
 	bool disable_wallet_bootstrap{ false };
 	bool disable_bootstrap_listener{ false };
+	bool disable_bootstrap_bulk_pull_server{ false };
+	bool disable_bootstrap_bulk_push_client{ false };
+	bool disable_rep_crawler{ false };
 	bool disable_tcp_realtime{ false };
 	bool disable_udp{ false };
 	bool disable_unchecked_cleanup{ false };
 	bool disable_unchecked_drop{ true };
 	bool fast_bootstrap{ false };
-	bool delay_frontier_confirmation_height_updating{ false };
 	bool read_only{ false };
+	/** Whether to read all frontiers and construct the representative weights */
+	bool cache_representative_weights_from_frontiers{ true };
+	/** Whether to read all frontiers and construct the total cemented count */
+	bool cache_cemented_count_from_frontiers{ true };
+	bool inactive_node{ false };
 	size_t sideband_batch_size{ 512 };
 	size_t block_processor_batch_size{ 0 };
 	size_t block_processor_full_size{ 65536 };

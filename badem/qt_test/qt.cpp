@@ -18,7 +18,7 @@ TEST (wallet, construction)
 {
 	badem_qt::eventloop_processor processor;
 	badem::system system (24000, 1);
-	auto wallet_l (system.nodes[0]->wallets.create (badem::uint256_union ()));
+	auto wallet_l (system.nodes[0]->wallets.create (badem::random_wallet_id ()));
 	auto key (wallet_l->deterministic_insert ());
 	auto wallet (std::make_shared<badem_qt::wallet> (*test_application, processor, *system.nodes[0], wallet_l, key));
 	wallet->start ();
@@ -33,7 +33,7 @@ TEST (wallet, status)
 {
 	badem_qt::eventloop_processor processor;
 	badem::system system (24000, 1);
-	auto wallet_l (system.nodes[0]->wallets.create (badem::uint256_union ()));
+	auto wallet_l (system.nodes[0]->wallets.create (badem::random_wallet_id ()));
 	badem::keypair key;
 	wallet_l->insert_adhoc (key.prv);
 	auto wallet (std::make_shared<badem_qt::wallet> (*test_application, processor, *system.nodes[0], wallet_l, key.pub));
@@ -64,7 +64,7 @@ TEST (wallet, startup_balance)
 {
 	badem_qt::eventloop_processor processor;
 	badem::system system (24000, 1);
-	auto wallet_l (system.nodes[0]->wallets.create (badem::uint256_union ()));
+	auto wallet_l (system.nodes[0]->wallets.create (badem::random_wallet_id ()));
 	badem::keypair key;
 	wallet_l->insert_adhoc (key.prv);
 	auto wallet (std::make_shared<badem_qt::wallet> (*test_application, processor, *system.nodes[0], wallet_l, key.pub));
@@ -78,7 +78,7 @@ TEST (wallet, select_account)
 {
 	badem_qt::eventloop_processor processor;
 	badem::system system (24000, 1);
-	auto wallet_l (system.nodes[0]->wallets.create (badem::uint256_union ()));
+	auto wallet_l (system.nodes[0]->wallets.create (badem::random_wallet_id ()));
 	badem::public_key key1 (wallet_l->deterministic_insert ());
 	badem::public_key key2 (wallet_l->deterministic_insert ());
 	auto wallet (std::make_shared<badem_qt::wallet> (*test_application, processor, *system.nodes[0], wallet_l, key1));
@@ -110,7 +110,7 @@ TEST (wallet, main)
 {
 	badem_qt::eventloop_processor processor;
 	badem::system system (24000, 1);
-	auto wallet_l (system.nodes[0]->wallets.create (badem::uint256_union ()));
+	auto wallet_l (system.nodes[0]->wallets.create (badem::random_wallet_id ()));
 	badem::keypair key;
 	wallet_l->insert_adhoc (key.prv);
 	auto wallet (std::make_shared<badem_qt::wallet> (*test_application, processor, *system.nodes[0], wallet_l, key.pub));
@@ -332,7 +332,7 @@ TEST (wallet, process_block)
 	QTest::mouseClick (wallet->show_advanced, Qt::LeftButton);
 	QTest::mouseClick (wallet->advanced.enter_block, Qt::LeftButton);
 	ASSERT_EQ (wallet->block_entry.window, wallet->main_stack->currentWidget ());
-	badem::send_block send (latest, key1.pub, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (latest));
+	badem::send_block send (latest, key1.pub, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (latest));
 	std::string previous;
 	send.hashables.previous.encode_hex (previous);
 	std::string balance;
@@ -465,7 +465,6 @@ TEST (wallet, create_change)
 
 TEST (history, short_text)
 {
-	bool init (false);
 	badem_qt::eventloop_processor processor;
 	badem::keypair key;
 	badem::system system (24000, 1);
@@ -476,20 +475,20 @@ TEST (history, short_text)
 		account = system.account (transaction, 0);
 	}
 	auto wallet (std::make_shared<badem_qt::wallet> (*test_application, processor, *system.nodes[0], system.wallet (0), account));
-	badem::mdb_store store (init, system.nodes[0]->logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	badem::mdb_store store (system.nodes[0]->logger, badem::unique_path ());
+	ASSERT_TRUE (!store.init_error ());
 	badem::genesis genesis;
 	badem::ledger ledger (store, system.nodes[0]->stats);
 	{
 		auto transaction (store.tx_begin_write ());
-		store.initialize (transaction, genesis);
+		store.initialize (transaction, genesis, ledger.rep_weights, ledger.cemented_count, ledger.block_count_cache);
 		badem::keypair key;
 		auto latest (ledger.latest (transaction, badem::test_genesis_key.pub));
-		badem::send_block send (latest, badem::test_genesis_key.pub, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (latest));
+		badem::send_block send (latest, badem::test_genesis_key.pub, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (latest));
 		ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, send).code);
-		badem::receive_block receive (send.hash (), send.hash (), badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (send.hash ()));
+		badem::receive_block receive (send.hash (), send.hash (), badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (send.hash ()));
 		ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, receive).code);
-		badem::change_block change (receive.hash (), key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (receive.hash ()));
+		badem::change_block change (receive.hash (), key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (receive.hash ()));
 		ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, change).code);
 	}
 	badem_qt::history history (ledger, badem::test_genesis_key.pub, *wallet);
@@ -598,7 +597,7 @@ TEST (wallet, republish)
 	{
 		auto transaction (system.nodes[0]->store.tx_begin_write ());
 		auto latest (system.nodes[0]->ledger.latest (transaction, badem::test_genesis_key.pub));
-		badem::send_block block (latest, key.pub, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system.work.generate (latest));
+		badem::send_block block (latest, key.pub, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system.work.generate (latest));
 		hash = block.hash ();
 		ASSERT_EQ (badem::process_result::progress, system.nodes[0]->ledger.process (transaction, block).code);
 	}
@@ -713,9 +712,8 @@ TEST (wallet, seed_work_generation)
 	QTest::mouseClick (wallet->accounts.import_wallet, Qt::LeftButton);
 	ASSERT_EQ (wallet->import.window, wallet->main_stack->currentWidget ());
 	badem::raw_key seed;
-	badem::uint256_union prv;
-	badem::deterministic_key (seed.data, 0, prv);
-	badem::uint256_union pub (badem::pub_key (prv));
+	auto prv = badem::deterministic_key (seed, 0);
+	auto pub (badem::pub_key (prv));
 	QTest::keyClicks (wallet->import.seed, seed.data.to_string ().c_str ());
 	QTest::keyClicks (wallet->import.clear_line, "clear keys");
 	uint64_t work (0);
@@ -799,7 +797,7 @@ TEST (wallet, DISABLED_synchronizing)
 	{
 		auto transaction (system1.nodes[0]->store.tx_begin_write ());
 		auto latest (system1.nodes[0]->ledger.latest (transaction, badem::genesis_account));
-		badem::send_block send (latest, key1, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, system1.work.generate (latest));
+		badem::send_block send (latest, key1, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *system1.work.generate (latest));
 		system1.nodes[0]->ledger.process (transaction, send);
 	}
 	ASSERT_EQ (0, wallet->active_status.active.count (badem_qt::status_types::synchronizing));

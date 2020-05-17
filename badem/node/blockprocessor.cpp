@@ -26,7 +26,7 @@ void badem::block_processor::stop ()
 {
 	generator.stop ();
 	{
-		std::lock_guard<std::mutex> lock (mutex);
+		badem::lock_guard<std::mutex> lock (mutex);
 		stopped = true;
 	}
 	condition.notify_all ();
@@ -35,17 +35,28 @@ void badem::block_processor::stop ()
 void badem::block_processor::flush ()
 {
 	node.checker.flush ();
-	std::unique_lock<std::mutex> lock (mutex);
+	badem::unique_lock<std::mutex> lock (mutex);
 	while (!stopped && (have_blocks () || active))
 	{
 		condition.wait (lock);
 	}
+	blocks_filter.clear ();
+}
+
+size_t badem::block_processor::size ()
+{
+	badem::unique_lock<std::mutex> lock (mutex);
+	return (blocks.size () + state_blocks.size () + forced.size ());
 }
 
 bool badem::block_processor::full ()
 {
-	std::unique_lock<std::mutex> lock (mutex);
-	return (blocks.size () + state_blocks.size ()) > node.flags.block_processor_full_size;
+	return size () > node.flags.block_processor_full_size;
+}
+
+bool badem::block_processor::half_full ()
+{
+	return size () > node.flags.block_processor_full_size / 2;
 }
 
 void badem::block_processor::add (std::shared_ptr<badem::block> block_a, uint64_t origination)
@@ -60,8 +71,9 @@ void badem::block_processor::add (badem::unchecked_info const & info_a)
 	{
 		{
 			auto hash (info_a.block->hash ());
-			std::lock_guard<std::mutex> lock (mutex);
-			if (blocks_hashes.find (hash) == blocks_hashes.end () && rolled_back.get<1> ().find (hash) == rolled_back.get<1> ().end ())
+			auto filter_hash (filter_item (hash, info_a.block->block_signature ()));
+			badem::lock_guard<std::mutex> lock (mutex);
+			if (blocks_filter.find (filter_hash) == blocks_filter.end () && rolled_back.get<1> ().find (hash) == rolled_back.get<1> ().end ())
 			{
 				if (info_a.verified == badem::signature_verification::unknown && (info_a.block->type () == badem::block_type::state || info_a.block->type () == badem::block_type::open || !info_a.account.is_zero ()))
 				{
@@ -71,7 +83,7 @@ void badem::block_processor::add (badem::unchecked_info const & info_a)
 				{
 					blocks.push_back (info_a);
 				}
-				blocks_hashes.insert (hash);
+				blocks_filter.insert (filter_hash);
 			}
 		}
 		condition.notify_all ();
@@ -86,7 +98,7 @@ void badem::block_processor::add (badem::unchecked_info const & info_a)
 void badem::block_processor::force (std::shared_ptr<badem::block> block_a)
 {
 	{
-		std::lock_guard<std::mutex> lock (mutex);
+		badem::lock_guard<std::mutex> lock (mutex);
 		forced.push_back (block_a);
 	}
 	condition.notify_all ();
@@ -94,13 +106,13 @@ void badem::block_processor::force (std::shared_ptr<badem::block> block_a)
 
 void badem::block_processor::wait_write ()
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	awaiting_write = true;
 }
 
 void badem::block_processor::process_blocks ()
 {
-	std::unique_lock<std::mutex> lock (mutex);
+	badem::unique_lock<std::mutex> lock (mutex);
 	while (!stopped)
 	{
 		if (have_blocks ())
@@ -137,25 +149,17 @@ bool badem::block_processor::have_blocks ()
 	return !blocks.empty () || !forced.empty () || !state_blocks.empty ();
 }
 
-void badem::block_processor::verify_state_blocks (badem::transaction const & transaction_a, std::unique_lock<std::mutex> & lock_a, size_t max_count)
+void badem::block_processor::verify_state_blocks (badem::unique_lock<std::mutex> & lock_a, size_t max_count)
 {
 	assert (!mutex.try_lock ());
 	badem::timer<std::chrono::milliseconds> timer_l (badem::timer_state::started);
 	std::deque<badem::unchecked_info> items;
-	for (auto i (0); i < max_count && !state_blocks.empty (); i++)
-	{
-		auto & item (state_blocks.front ());
-		if (!node.ledger.store.block_exists (transaction_a, item.block->type (), item.block->hash ()))
-		{
-			items.push_back (std::move (item));
-		}
-		state_blocks.pop_front ();
-	}
+	items.swap (state_blocks);
 	lock_a.unlock ();
 	if (!items.empty ())
 	{
 		auto size (items.size ());
-		std::vector<badem::uint256_union> hashes;
+		std::vector<badem::block_hash> hashes;
 		hashes.reserve (size);
 		std::vector<unsigned char const *> messages;
 		messages.reserve (size);
@@ -165,7 +169,7 @@ void badem::block_processor::verify_state_blocks (badem::transaction const & tra
 		accounts.reserve (size);
 		std::vector<unsigned char const *> pub_keys;
 		pub_keys.reserve (size);
-		std::vector<badem::uint512_union> blocks_signatures;
+		std::vector<badem::signature> blocks_signatures;
 		blocks_signatures.reserve (size);
 		std::vector<unsigned char const *> signatures;
 		signatures.reserve (size);
@@ -180,7 +184,7 @@ void badem::block_processor::verify_state_blocks (badem::transaction const & tra
 			badem::account account (item.block->account ());
 			if (!item.block->link ().is_zero () && node.ledger.is_epoch_link (item.block->link ()))
 			{
-				account = node.ledger.epoch_signer;
+				account = node.ledger.epoch_signer (item.block->link ());
 			}
 			else if (!item.account.is_zero ())
 			{
@@ -219,6 +223,11 @@ void badem::block_processor::verify_state_blocks (badem::transaction const & tra
 				item.verified = badem::signature_verification::valid;
 				blocks.push_back (std::move (item));
 			}
+			else
+			{
+				blocks_filter.erase (filter_item (hashes[i], blocks_signatures[i]));
+				requeue_invalid (hashes[i], item);
+			}
 			items.pop_front ();
 		}
 		if (node.config.logging.timing_logging ())
@@ -232,7 +241,7 @@ void badem::block_processor::verify_state_blocks (badem::transaction const & tra
 	}
 }
 
-void badem::block_processor::process_batch (std::unique_lock<std::mutex> & lock_a)
+void badem::block_processor::process_batch (badem::unique_lock<std::mutex> & lock_a)
 {
 	badem::timer<std::chrono::milliseconds> timer_l;
 	lock_a.lock ();
@@ -243,16 +252,15 @@ void badem::block_processor::process_batch (std::unique_lock<std::mutex> & lock_
 		if (!state_blocks.empty ())
 		{
 			size_t max_verification_batch (node.flags.block_processor_verification_size != 0 ? node.flags.block_processor_verification_size : 2048 * (node.config.signature_checker_threads + 1));
-			auto transaction (node.store.tx_begin_read ());
 			while (!state_blocks.empty () && timer_l.before_deadline (std::chrono::seconds (2)))
 			{
-				verify_state_blocks (transaction, lock_a, max_verification_batch);
+				verify_state_blocks (lock_a, max_verification_batch);
 			}
 		}
 	}
 	lock_a.unlock ();
 	auto scoped_write_guard = write_database_queue.wait (badem::writer::process_batch);
-	auto transaction (node.store.tx_begin_write ());
+	auto transaction (node.store.tx_begin_write ({ badem::tables::accounts, badem::tables::cached_counts, badem::tables::change_blocks, badem::tables::frontiers, badem::tables::open_blocks, badem::tables::pending, badem::tables::receive_blocks, badem::tables::representation, badem::tables::send_blocks, badem::tables::state_blocks, badem::tables::unchecked }, { badem::tables::confirmation_height }));
 	timer_l.restart ();
 	lock_a.lock ();
 	// Processing blocks
@@ -282,22 +290,24 @@ void badem::block_processor::process_batch (std::unique_lock<std::mutex> & lock_
 			node.logger.always_log (boost::str (boost::format ("%1% blocks (+ %2% state blocks) (+ %3% forced) in processing queue") % blocks.size () % state_blocks.size () % forced.size ()));
 		}
 		badem::unchecked_info info;
+		badem::block_hash hash (0);
 		bool force (false);
 		if (forced.empty ())
 		{
 			info = blocks.front ();
 			blocks.pop_front ();
-			blocks_hashes.erase (info.block->hash ());
+			hash = info.block->hash ();
+			blocks_filter.erase (filter_item (hash, info.block->block_signature ()));
 		}
 		else
 		{
 			info = badem::unchecked_info (forced.front (), 0, badem::seconds_since_epoch (), badem::signature_verification::unknown);
 			forced.pop_front ();
+			hash = info.block->hash ();
 			force = true;
 			number_of_forced_processed++;
 		}
 		lock_a.unlock ();
-		auto hash (info.block->hash ());
 		if (force)
 		{
 			auto successor (node.ledger.successor (transaction, info.block->qualified_root ()));
@@ -332,20 +342,19 @@ void badem::block_processor::process_batch (std::unique_lock<std::mutex> & lock_
 				for (auto & i : rollback_list)
 				{
 					node.votes_cache.remove (i->hash ());
-					node.wallets.watcher.remove (i);
+					node.wallets.watcher->remove (i);
 					node.active.erase (*i);
 				}
 			}
 		}
 		number_of_blocks_processed++;
-		auto process_result (process_one (transaction, info));
-		(void)process_result;
+		process_one (transaction, info);
 		lock_a.lock ();
 		/* Verify more state blocks if blocks deque is empty
 		 Because verification is long process, avoid large deque verification inside of write transaction */
 		if (blocks.empty () && !state_blocks.empty ())
 		{
-			verify_state_blocks (transaction, lock_a, 256 * (node.config.signature_checker_threads + 1));
+			verify_state_blocks (lock_a, 256 * (node.config.signature_checker_threads + 1));
 		}
 	}
 	awaiting_write = false;
@@ -360,11 +369,11 @@ void badem::block_processor::process_batch (std::unique_lock<std::mutex> & lock_
 void badem::block_processor::process_live (badem::block_hash const & hash_a, std::shared_ptr<badem::block> block_a, const bool watch_work_a)
 {
 	// Start collecting quorum on block
-	node.active.start (block_a);
+	node.active.start (block_a, false);
 	//add block to watcher if desired after block has been added to active
 	if (watch_work_a)
 	{
-		node.wallets.watcher.add (block_a);
+		node.wallets.watcher->add (block_a);
 	}
 	// Announce block contents to the network
 	node.network.flood_block (block_a, false);
@@ -373,31 +382,9 @@ void badem::block_processor::process_live (badem::block_hash const & hash_a, std
 		// Announce our weighted vote to the network
 		generator.add (hash_a);
 	}
-	// Request confirmation for new block with delay
-	std::weak_ptr<badem::node> node_w (node.shared ());
-	node.alarm.add (std::chrono::steady_clock::now () + confirmation_request_delay, [node_w, block_a]() {
-		if (auto node_l = node_w.lock ())
-		{
-			// Check if votes were already requested
-			bool send_request (false);
-			{
-				std::lock_guard<std::mutex> lock (node_l->active.mutex);
-				auto existing (node_l->active.blocks.find (block_a->hash ()));
-				if (existing != node_l->active.blocks.end () && !existing->second->confirmed && !existing->second->stopped && existing->second->confirmation_request_count == 0)
-				{
-					send_request = true;
-				}
-			}
-			// Request votes
-			if (send_request)
-			{
-				node_l->network.broadcast_confirm_req (block_a);
-			}
-		}
-	});
 }
 
-badem::process_return badem::block_processor::process_one (badem::transaction const & transaction_a, badem::unchecked_info info_a, const bool watch_work_a)
+badem::process_return badem::block_processor::process_one (badem::write_transaction const & transaction_a, badem::unchecked_info info_a, const bool watch_work_a)
 {
 	badem::process_return result;
 	auto hash (info_a.block->hash ());
@@ -410,7 +397,7 @@ badem::process_return badem::block_processor::process_one (badem::transaction co
 			if (node.config.logging.ledger_logging ())
 			{
 				std::string block;
-				info_a.block->serialize_json (block);
+				info_a.block->serialize_json (block, node.config.logging.single_line_record ());
 				node.logger.try_log (boost::str (boost::format ("Processing block %1%: %2%") % hash.to_string () % block));
 			}
 			if (info_a.modified > badem::seconds_since_epoch () - 300 && node.block_arrival.recent (hash))
@@ -432,7 +419,7 @@ badem::process_return badem::block_processor::process_one (badem::transaction co
 				info_a.modified = badem::seconds_since_epoch ();
 			}
 			node.store.unchecked_put (transaction_a, badem::unchecked_key (info_a.block->previous (), hash), info_a);
-			node.gap_cache.add (transaction_a, hash);
+			node.gap_cache.add (hash);
 			break;
 		}
 		case badem::process_result::gap_source:
@@ -447,7 +434,7 @@ badem::process_return badem::block_processor::process_one (badem::transaction co
 				info_a.modified = badem::seconds_since_epoch ();
 			}
 			node.store.unchecked_put (transaction_a, badem::unchecked_key (node.ledger.block_source (transaction_a, *(info_a.block)), hash), info_a);
-			node.gap_cache.add (transaction_a, hash);
+			node.gap_cache.add (hash);
 			break;
 		}
 		case badem::process_result::old:
@@ -460,7 +447,7 @@ badem::process_return badem::block_processor::process_one (badem::transaction co
 			{
 				queue_unchecked (transaction_a, hash);
 			}
-			node.active.update_difficulty (*(info_a.block));
+			node.active.update_difficulty (info_a.block, transaction_a);
 			break;
 		}
 		case badem::process_result::bad_signature:
@@ -469,6 +456,7 @@ badem::process_return badem::block_processor::process_one (badem::transaction co
 			{
 				node.logger.try_log (boost::str (boost::format ("Bad signature for: %1%") % hash.to_string ()));
 			}
+			requeue_invalid (hash, info_a);
 			break;
 		}
 		case badem::process_result::negative_spend:
@@ -530,14 +518,14 @@ badem::process_return badem::block_processor::process_one (badem::transaction co
 	return result;
 }
 
-badem::process_return badem::block_processor::process_one (badem::transaction const & transaction_a, std::shared_ptr<badem::block> block_a, const bool watch_work_a)
+badem::process_return badem::block_processor::process_one (badem::write_transaction const & transaction_a, std::shared_ptr<badem::block> block_a, const bool watch_work_a)
 {
 	badem::unchecked_info info (block_a, block_a->account (), 0, badem::signature_verification::unknown);
 	auto result (process_one (transaction_a, info, watch_work_a));
 	return result;
 }
 
-void badem::block_processor::queue_unchecked (badem::transaction const & transaction_a, badem::block_hash const & hash_a)
+void badem::block_processor::queue_unchecked (badem::write_transaction const & transaction_a, badem::block_hash const & hash_a)
 {
 	auto unchecked_blocks (node.store.unchecked_get (transaction_a, hash_a));
 	for (auto & info : unchecked_blocks)
@@ -549,4 +537,27 @@ void badem::block_processor::queue_unchecked (badem::transaction const & transac
 		add (info);
 	}
 	node.gap_cache.erase (hash_a);
+}
+
+badem::block_hash badem::block_processor::filter_item (badem::block_hash const & hash_a, badem::signature const & signature_a)
+{
+	static badem::random_constants constants;
+	badem::block_hash result;
+	blake2b_state state;
+	blake2b_init (&state, sizeof (result.bytes));
+	blake2b_update (&state, constants.not_an_account.bytes.data (), constants.not_an_account.bytes.size ());
+	blake2b_update (&state, signature_a.bytes.data (), signature_a.bytes.size ());
+	blake2b_update (&state, hash_a.bytes.data (), hash_a.bytes.size ());
+	blake2b_final (&state, result.bytes.data (), sizeof (result.bytes));
+	return result;
+}
+
+void badem::block_processor::requeue_invalid (badem::block_hash const & hash_a, badem::unchecked_info const & info_a)
+{
+	assert (hash_a == info_a.block->hash ());
+	auto attempt (node.bootstrap_initiator.current_attempt ());
+	if (attempt != nullptr && attempt->mode == badem::bootstrap_mode::lazy)
+	{
+		attempt->lazy_requeue (hash_a, info_a.block->previous (), info_a.confirmed);
+	}
 }

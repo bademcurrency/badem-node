@@ -28,7 +28,7 @@ public:
 	void observe ();
 	void complete (badem::payment_status);
 	std::mutex mutex;
-	std::condition_variable condition;
+	badem::condition_variable condition;
 	badem::node & node;
 	badem::account account;
 	badem::amount amount;

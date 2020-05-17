@@ -1,3 +1,4 @@
+#include <badem/lib/asio.hpp>
 #include <badem/lib/json_error_response.hpp>
 #include <badem/rpc/rpc_request_processor.hpp>
 
@@ -9,7 +10,7 @@ thread ([this]() {
 	this->run ();
 })
 {
-	std::lock_guard<std::mutex> lk (this->request_mutex);
+	badem::lock_guard<std::mutex> lk (this->request_mutex);
 	this->connections.reserve (rpc_config.rpc_process.num_ipc_connections);
 	for (auto i = 0u; i < rpc_config.rpc_process.num_ipc_connections; ++i)
 	{
@@ -18,7 +19,7 @@ thread ([this]() {
 		// clang-format off
 		connection->client.async_connect (ipc_address, ipc_port, [ connection, &connections_mutex = this->connections_mutex ](badem::error err) {
 			// Even if there is an error this needs to be set so that another attempt can be made to connect with the ipc connection
-			std::lock_guard<std::mutex> lk (connections_mutex);
+			badem::lock_guard<std::mutex> lk (connections_mutex);
 			connection->is_available = true;
 		});
 		// clang-format on
@@ -33,7 +34,7 @@ badem::rpc_request_processor::~rpc_request_processor ()
 void badem::rpc_request_processor::stop ()
 {
 	{
-		std::lock_guard<std::mutex> lock (request_mutex);
+		badem::lock_guard<std::mutex> lock (request_mutex);
 		stopped = true;
 	}
 	condition.notify_one ();
@@ -46,7 +47,7 @@ void badem::rpc_request_processor::stop ()
 void badem::rpc_request_processor::add (std::shared_ptr<rpc_request> request)
 {
 	{
-		std::lock_guard<std::mutex> lk (request_mutex);
+		badem::lock_guard<std::mutex> lk (request_mutex);
 		requests.push_back (request);
 	}
 	condition.notify_one ();
@@ -78,12 +79,12 @@ void badem::rpc_request_processor::read_payload (std::shared_ptr<badem::ipc_conn
 
 void badem::rpc_request_processor::make_available (badem::ipc_connection & connection)
 {
-	std::lock_guard<std::mutex> lk (connections_mutex);
+	badem::lock_guard<std::mutex> lk (connections_mutex);
 	connection.is_available = true; // Allow people to use it now
 }
 
 // Connection does not exist or has been closed, try to connect to it again and then resend IPC request
-void badem::rpc_request_processor::try_reconnect_and_execute_request (std::shared_ptr<badem::ipc_connection> connection, std::shared_ptr<std::vector<uint8_t>> req, std::shared_ptr<std::vector<uint8_t>> res, std::shared_ptr<badem::rpc_request> rpc_request)
+void badem::rpc_request_processor::try_reconnect_and_execute_request (std::shared_ptr<badem::ipc_connection> connection, badem::shared_const_buffer const & req, std::shared_ptr<std::vector<uint8_t>> res, std::shared_ptr<badem::rpc_request> rpc_request)
 {
 	connection->client.async_connect (ipc_address, ipc_port, [this, connection, req, res, rpc_request](badem::error err) {
 		if (!err)
@@ -122,13 +123,13 @@ void badem::rpc_request_processor::try_reconnect_and_execute_request (std::share
 void badem::rpc_request_processor::run ()
 {
 	// This should be a conditioned wait
-	std::unique_lock<std::mutex> lk (request_mutex);
+	badem::unique_lock<std::mutex> lk (request_mutex);
 	while (!stopped)
 	{
 		if (!requests.empty ())
 		{
 			lk.unlock ();
-			std::unique_lock<std::mutex> conditions_lk (connections_mutex);
+			badem::unique_lock<std::mutex> conditions_lk (connections_mutex);
 			// Find the first free ipc_client
 			auto it = std::find_if (connections.begin (), connections.end (), [](auto connection) -> bool {
 				return connection->is_available;

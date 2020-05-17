@@ -229,7 +229,7 @@ class block_viewer
 {
 public:
 	block_viewer (badem_qt::wallet &);
-	void rebroadcast_action (badem::uint256_union const &);
+	void rebroadcast_action (badem::block_hash const &);
 	QWidget * window;
 	QVBoxLayout * layout;
 	QLabel * hash_label;

@@ -54,6 +54,12 @@ std::string badem::error_common_messages::message (int ev) const
 			return "Bad wallet number";
 		case badem::error_common::bad_work_format:
 			return "Bad work";
+		case badem::error_common::disabled_local_work_generation:
+			return "Local work generation is disabled";
+		case badem::error_common::disabled_work_generation:
+			return "Work generation is disabled";
+		case badem::error_common::failure_work_generation:
+			return "Work generation cancellation or failure";
 		case badem::error_common::insufficient_balance:
 			return "Insufficient balance";
 		case badem::error_common::invalid_amount:
@@ -164,6 +170,10 @@ std::string badem::error_rpc_messages::message (int ev) const
 			return "Invalid balance number";
 		case badem::error_rpc::invalid_destinations:
 			return "Invalid destinations number";
+		case badem::error_rpc::invalid_epoch:
+			return "Invalid epoch number";
+		case badem::error_rpc::invalid_epoch_signer:
+			return "Incorrect epoch signer";
 		case badem::error_rpc::invalid_offset:
 			return "Invalid offset";
 		case badem::error_rpc::invalid_missing_type:
@@ -240,6 +250,8 @@ std::string badem::error_config_messages::message (int ev) const
 			return "Invalid configuration value";
 		case badem::error_config::missing_value:
 			return "Missing value in configuration";
+		case badem::error_config::rocksdb_enabled_but_not_supported:
+			return "RocksDB has been enabled, but the node has not been built with RocksDB support. Set the CMake flag -DBADEM_ROCKSDB=ON";
 	}
 
 	return "Invalid error code";

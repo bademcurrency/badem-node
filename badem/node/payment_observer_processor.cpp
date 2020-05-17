@@ -12,7 +12,7 @@ void badem::payment_observer_processor::observer_action (badem::account const & 
 {
 	std::shared_ptr<badem::json_payment_observer> observer;
 	{
-		std::lock_guard<std::mutex> lock (mutex);
+		badem::lock_guard<std::mutex> lock (mutex);
 		auto existing (payment_observers.find (account_a));
 		if (existing != payment_observers.end ())
 		{
@@ -27,14 +27,14 @@ void badem::payment_observer_processor::observer_action (badem::account const & 
 
 void badem::payment_observer_processor::add (badem::account const & account_a, std::shared_ptr<badem::json_payment_observer> payment_observer_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	assert (payment_observers.find (account_a) == payment_observers.end ());
 	payment_observers[account_a] = payment_observer_a;
 }
 
 void badem::payment_observer_processor::erase (badem::account & account_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	assert (payment_observers.find (account_a) != payment_observers.end ());
 	payment_observers.erase (account_a);
 }

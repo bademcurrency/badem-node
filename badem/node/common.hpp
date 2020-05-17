@@ -2,6 +2,7 @@
 
 #include <badem/boost/asio.hpp>
 #include <badem/crypto_lib/random_pool.hpp>
+#include <badem/lib/asio.hpp>
 #include <badem/lib/config.hpp>
 #include <badem/lib/memory.hpp>
 #include <badem/secure/common.hpp>
@@ -233,12 +234,16 @@ public:
 	virtual ~message () = default;
 	virtual void serialize (badem::stream &) const = 0;
 	virtual void visit (badem::message_visitor &) const = 0;
-	virtual std::shared_ptr<std::vector<uint8_t>> to_bytes () const
+	std::shared_ptr<std::vector<uint8_t>> to_bytes () const
 	{
 		auto bytes = std::make_shared<std::vector<uint8_t>> ();
 		badem::vectorstream stream (*bytes);
 		serialize (stream);
 		return bytes;
+	}
+	badem::shared_const_buffer to_shared_const_buffer () const
+	{
+		return shared_const_buffer (to_bytes ());
 	}
 	badem::message_header header;
 };
@@ -305,14 +310,14 @@ class confirm_req final : public message
 public:
 	confirm_req (bool &, badem::stream &, badem::message_header const &, badem::block_uniquer * = nullptr);
 	explicit confirm_req (std::shared_ptr<badem::block>);
-	confirm_req (std::vector<std::pair<badem::block_hash, badem::block_hash>> const &);
-	confirm_req (badem::block_hash const &, badem::block_hash const &);
+	confirm_req (std::vector<std::pair<badem::block_hash, badem::root>> const &);
+	confirm_req (badem::block_hash const &, badem::root const &);
 	void serialize (badem::stream &) const override;
 	bool deserialize (badem::stream &, badem::block_uniquer * = nullptr);
 	void visit (badem::message_visitor &) const override;
 	bool operator== (badem::confirm_req const &) const;
 	std::shared_ptr<badem::block> block;
-	std::vector<std::pair<badem::block_hash, badem::block_hash>> roots_hashes;
+	std::vector<std::pair<badem::block_hash, badem::root>> roots_hashes;
 	std::string roots_string () const;
 	static size_t size (badem::block_type, size_t = 0);
 };
@@ -350,9 +355,9 @@ public:
 	void serialize (badem::stream &) const override;
 	bool deserialize (badem::stream &);
 	void visit (badem::message_visitor &) const override;
-	badem::uint256_union start;
-	badem::block_hash end;
-	count_t count;
+	badem::hash_or_account start{ 0 };
+	badem::block_hash end{ 0 };
+	count_t count{ 0 };
 	bool is_count_present () const;
 	void set_count_present (bool);
 	static size_t constexpr count_present_flag = badem::message_header::bulk_pull_count_present_flag;
@@ -367,8 +372,8 @@ public:
 	void serialize (badem::stream &) const override;
 	bool deserialize (badem::stream &);
 	void visit (badem::message_visitor &) const override;
-	badem::uint256_union account;
-	badem::uint128_union minimum_amount;
+	badem::account account;
+	badem::amount minimum_amount;
 	bulk_pull_account_flags flags;
 	static size_t constexpr size = sizeof (account) + sizeof (minimum_amount) + sizeof (bulk_pull_account_flags);
 };
@@ -385,7 +390,7 @@ class node_id_handshake final : public message
 {
 public:
 	node_id_handshake (bool &, badem::stream &, badem::message_header const &);
-	node_id_handshake (boost::optional<badem::block_hash>, boost::optional<std::pair<badem::account, badem::signature>>);
+	node_id_handshake (boost::optional<badem::uint256_union>, boost::optional<std::pair<badem::account, badem::signature>>);
 	void serialize (badem::stream &) const override;
 	bool deserialize (badem::stream &);
 	void visit (badem::message_visitor &) const override;

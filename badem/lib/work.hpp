@@ -15,38 +15,44 @@
 namespace badem
 {
 class block;
-bool work_validate (badem::block_hash const &, uint64_t, uint64_t * = nullptr);
+bool work_validate (badem::root const &, uint64_t, uint64_t * = nullptr);
 bool work_validate (badem::block const &, uint64_t * = nullptr);
-uint64_t work_value (badem::block_hash const &, uint64_t);
+uint64_t work_value (badem::root const &, uint64_t);
 class opencl_work;
 class work_item final
 {
 public:
-	badem::uint256_union item;
+	work_item (badem::root const & item_a, std::function<void(boost::optional<uint64_t> const &)> const & callback_a, uint64_t difficulty_a) :
+	item (item_a), callback (callback_a), difficulty (difficulty_a)
+	{
+	}
+
+	badem::root item;
 	std::function<void(boost::optional<uint64_t> const &)> callback;
 	uint64_t difficulty;
 };
 class work_pool final
 {
 public:
-	work_pool (unsigned, std::chrono::nanoseconds = std::chrono::nanoseconds (0), std::function<boost::optional<uint64_t> (badem::uint256_union const &, uint64_t)> = nullptr);
+	work_pool (unsigned, std::chrono::nanoseconds = std::chrono::nanoseconds (0), std::function<boost::optional<uint64_t> (badem::root const &, uint64_t, std::atomic<int> &)> = nullptr);
 	~work_pool ();
 	void loop (uint64_t);
 	void stop ();
-	void cancel (badem::uint256_union const &);
-	void generate (badem::uint256_union const &, std::function<void(boost::optional<uint64_t> const &)>);
-	void generate (badem::uint256_union const &, std::function<void(boost::optional<uint64_t> const &)>, uint64_t);
-	uint64_t generate (badem::uint256_union const &);
-	uint64_t generate (badem::uint256_union const &, uint64_t);
+	void cancel (badem::root const &);
+	void generate (badem::root const &, std::function<void(boost::optional<uint64_t> const &)>);
+	void generate (badem::root const &, std::function<void(boost::optional<uint64_t> const &)>, uint64_t);
+	boost::optional<uint64_t> generate (badem::root const &);
+	boost::optional<uint64_t> generate (badem::root const &, uint64_t);
+	size_t size ();
 	badem::network_constants network_constants;
 	std::atomic<int> ticket;
 	bool done;
 	std::vector<boost::thread> threads;
 	std::list<badem::work_item> pending;
 	std::mutex mutex;
-	std::condition_variable producer_condition;
+	badem::condition_variable producer_condition;
 	std::chrono::nanoseconds pow_rate_limiter;
-	std::function<boost::optional<uint64_t> (badem::uint256_union const &, uint64_t)> opencl;
+	std::function<boost::optional<uint64_t> (badem::root const &, uint64_t, std::atomic<int> &)> opencl;
 	badem::observer_set<bool> work_observers;
 };
 

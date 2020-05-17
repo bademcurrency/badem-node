@@ -1,8 +1,9 @@
+#include <badem/lib/utility.hpp>
 #include <badem/node/write_database_queue.hpp>
 
 #include <algorithm>
 
-badem::write_guard::write_guard (std::condition_variable & cv_a, std::function<void()> guard_finish_callback_a) :
+badem::write_guard::write_guard (badem::condition_variable & cv_a, std::function<void()> guard_finish_callback_a) :
 cv (cv_a),
 guard_finish_callback (guard_finish_callback_a)
 {
@@ -17,7 +18,7 @@ badem::write_guard::~write_guard ()
 badem::write_database_queue::write_database_queue () :
 // clang-format off
 guard_finish_callback ([&queue = queue, &mutex = mutex]() {
-	std::lock_guard<std::mutex> guard (mutex);
+	badem::lock_guard<std::mutex> guard (mutex);
 	queue.pop_front ();
 })
 // clang-format on
@@ -26,7 +27,7 @@ guard_finish_callback ([&queue = queue, &mutex = mutex]() {
 
 badem::write_guard badem::write_database_queue::wait (badem::writer writer)
 {
-	std::unique_lock<std::mutex> lk (mutex);
+	badem::unique_lock<std::mutex> lk (mutex);
 	// Add writer to the end of the queue if it's not already waiting
 	auto exists = std::find (queue.cbegin (), queue.cend (), writer) != queue.cend ();
 	if (!exists)
@@ -44,7 +45,7 @@ badem::write_guard badem::write_database_queue::wait (badem::writer writer)
 
 bool badem::write_database_queue::contains (badem::writer writer)
 {
-	std::lock_guard<std::mutex> guard (mutex);
+	badem::lock_guard<std::mutex> guard (mutex);
 	return std::find (queue.cbegin (), queue.cend (), writer) != queue.cend ();
 }
 
@@ -52,7 +53,7 @@ bool badem::write_database_queue::process (badem::writer writer)
 {
 	auto result = false;
 	{
-		std::lock_guard<std::mutex> guard (mutex);
+		badem::lock_guard<std::mutex> guard (mutex);
 		// Add writer to the end of the queue if it's not already waiting
 		auto exists = std::find (queue.cbegin (), queue.cend (), writer) != queue.cend ();
 		if (!exists)

@@ -79,7 +79,7 @@ node (node_a)
 		}
 	}
 	// Warn the user if the options resulted in an empty filter
-	if (!all_local_accounts && accounts.empty ())
+	if (has_account_filtering_options && !all_local_accounts && accounts.empty ())
 	{
 		node.logger.always_log ("Websocket: provided options resulted in an empty block confirmation filter");
 	}
@@ -179,7 +179,7 @@ ws_listener (listener_a), ws (std::move (socket_a)), strand (ws.get_executor ())
 badem::websocket::session::~session ()
 {
 	{
-		std::unique_lock<std::mutex> lk (subscriptions_mutex);
+		badem::unique_lock<std::mutex> lk (subscriptions_mutex);
 		for (auto & subscription : subscriptions)
 		{
 			ws_listener.decrease_subscriber_count (subscription.first);
@@ -223,7 +223,7 @@ void badem::websocket::session::close ()
 void badem::websocket::session::write (badem::websocket::message message_a)
 {
 	// clang-format off
-	std::unique_lock<std::mutex> lk (subscriptions_mutex);
+	badem::unique_lock<std::mutex> lk (subscriptions_mutex);
 	auto subscription (subscriptions.find (message_a.topic));
 	if (message_a.topic == badem::websocket::topic::ack || (subscription != subscriptions.end () && !subscription->second->should_filter (message_a)))
 	{
@@ -244,14 +244,13 @@ void badem::websocket::session::write (badem::websocket::message message_a)
 
 void badem::websocket::session::write_queued_messages ()
 {
-	auto msg (send_queue.front ());
-	auto msg_str (msg.to_string ());
+	auto msg (send_queue.front ().to_string ());
 	auto this_l (shared_from_this ());
 
 	// clang-format off
-	ws.async_write (boost::asio::buffer (msg_str->data (), msg_str->size ()),
+	ws.async_write (badem::shared_const_buffer (msg),
 	boost::asio::bind_executor (strand,
-	[msg_str, this_l](boost::system::error_code ec, std::size_t bytes_transferred) {
+	[this_l](boost::system::error_code ec, std::size_t bytes_transferred) {
 		this_l->send_queue.pop_front ();
 		if (!ec)
 		{
@@ -328,6 +327,10 @@ badem::websocket::topic to_topic (std::string const & topic_a)
 	{
 		topic = badem::websocket::topic::active_difficulty;
 	}
+	else if (topic_a == "work")
+	{
+		topic = badem::websocket::topic::work;
+	}
 
 	return topic;
 }
@@ -354,6 +357,10 @@ std::string from_topic (badem::websocket::topic topic_a)
 	else if (topic_a == badem::websocket::topic::active_difficulty)
 	{
 		topic = "active_difficulty";
+	}
+	else if (topic_a == badem::websocket::topic::work)
+	{
+		topic = "work";
 	}
 	return topic;
 }
@@ -383,7 +390,7 @@ void badem::websocket::session::handle_message (boost::property_tree::ptree cons
 	if (action == "subscribe" && topic_l != badem::websocket::topic::invalid)
 	{
 		auto options_text_l (message_a.get_child_optional ("options"));
-		std::lock_guard<std::mutex> lk (subscriptions_mutex);
+		badem::lock_guard<std::mutex> lk (subscriptions_mutex);
 		std::unique_ptr<badem::websocket::options> options_l{ nullptr };
 		if (options_text_l && topic_l == badem::websocket::topic::confirmation)
 		{
@@ -413,13 +420,19 @@ void badem::websocket::session::handle_message (boost::property_tree::ptree cons
 	}
 	else if (action == "unsubscribe" && topic_l != badem::websocket::topic::invalid)
 	{
-		std::lock_guard<std::mutex> lk (subscriptions_mutex);
+		badem::lock_guard<std::mutex> lk (subscriptions_mutex);
 		if (subscriptions.erase (topic_l))
 		{
 			ws_listener.get_node ().logger.always_log ("Websocket: removed subscription to topic: ", from_topic (topic_l));
 			ws_listener.decrease_subscriber_count (topic_l);
 		}
 		action_succeeded = true;
+	}
+	else if (action == "ping")
+	{
+		action_succeeded = true;
+		ack_l = "true";
+		action = "pong";
 	}
 	if (ack_l && action_succeeded)
 	{
@@ -432,7 +445,7 @@ void badem::websocket::listener::stop ()
 	stopped = true;
 	acceptor.close ();
 
-	std::lock_guard<std::mutex> lk (sessions_mutex);
+	badem::lock_guard<std::mutex> lk (sessions_mutex);
 	for (auto & weak_session : sessions)
 	{
 		auto session_ptr (weak_session.lock ());
@@ -507,7 +520,7 @@ void badem::websocket::listener::broadcast_confirmation (std::shared_ptr<badem::
 {
 	badem::websocket::message_builder builder;
 
-	std::lock_guard<std::mutex> lk (sessions_mutex);
+	badem::lock_guard<std::mutex> lk (sessions_mutex);
 	boost::optional<badem::websocket::message> msg_with_block;
 	boost::optional<badem::websocket::message> msg_without_block;
 	for (auto & weak_session : sessions)
@@ -547,7 +560,7 @@ void badem::websocket::listener::broadcast_confirmation (std::shared_ptr<badem::
 
 void badem::websocket::listener::broadcast (badem::websocket::message message_a)
 {
-	std::lock_guard<std::mutex> lk (sessions_mutex);
+	badem::lock_guard<std::mutex> lk (sessions_mutex);
 	for (auto & weak_session : sessions)
 	{
 		auto session_ptr (weak_session.lock ());
@@ -616,6 +629,7 @@ badem::websocket::message badem::websocket::message_builder::block_confirmed (st
 		election_node_l.add ("duration", election_status_a.election_duration.count ());
 		election_node_l.add ("time", election_status_a.election_end.count ());
 		election_node_l.add ("tally", election_status_a.tally.to_string_dec ());
+		election_node_l.add ("request_count", election_status_a.confirmation_request_count);
 		message_node_l.add_child ("election_info", election_node_l);
 	}
 
@@ -647,20 +661,74 @@ badem::websocket::message badem::websocket::message_builder::vote_received (std:
 	return message_l;
 }
 
-badem::websocket::message badem::websocket::message_builder::difficulty_changed (uint64_t publish_threshold, uint64_t difficulty_active)
+badem::websocket::message badem::websocket::message_builder::difficulty_changed (uint64_t publish_threshold_a, uint64_t difficulty_active_a)
 {
 	badem::websocket::message message_l (badem::websocket::topic::active_difficulty);
 	set_common_fields (message_l);
 
 	// Active difficulty information
 	boost::property_tree::ptree difficulty_l;
-	difficulty_l.put ("network_minimum", badem::to_string_hex (publish_threshold));
-	difficulty_l.put ("network_current", badem::to_string_hex (difficulty_active));
-	auto multiplier = badem::difficulty::to_multiplier (difficulty_active, publish_threshold);
+	difficulty_l.put ("network_minimum", badem::to_string_hex (publish_threshold_a));
+	difficulty_l.put ("network_current", badem::to_string_hex (difficulty_active_a));
+	auto multiplier = badem::difficulty::to_multiplier (difficulty_active_a, publish_threshold_a);
 	difficulty_l.put ("multiplier", badem::to_string (multiplier));
 
 	message_l.contents.add_child ("message", difficulty_l);
 	return message_l;
+}
+
+badem::websocket::message badem::websocket::message_builder::work_generation (badem::block_hash const & root_a, uint64_t work_a, uint64_t difficulty_a, uint64_t publish_threshold_a, std::chrono::milliseconds const & duration_a, std::string const & peer_a, std::vector<std::string> const & bad_peers_a, bool completed_a, bool cancelled_a)
+{
+	badem::websocket::message message_l (badem::websocket::topic::work);
+	set_common_fields (message_l);
+
+	// Active difficulty information
+	boost::property_tree::ptree work_l;
+	work_l.put ("success", completed_a ? "true" : "false");
+	work_l.put ("reason", completed_a ? "" : cancelled_a ? "cancelled" : "failure");
+	work_l.put ("duration", duration_a.count ());
+
+	boost::property_tree::ptree request_l;
+	request_l.put ("hash", root_a.to_string ());
+	request_l.put ("difficulty", badem::to_string_hex (difficulty_a));
+	auto request_multiplier_l (badem::difficulty::to_multiplier (difficulty_a, publish_threshold_a));
+	request_l.put ("multiplier", badem::to_string (request_multiplier_l));
+	work_l.add_child ("request", request_l);
+
+	if (completed_a)
+	{
+		boost::property_tree::ptree result_l;
+		result_l.put ("source", peer_a);
+		result_l.put ("work", badem::to_string_hex (work_a));
+		uint64_t result_difficulty_l;
+		badem::work_validate (root_a, work_a, &result_difficulty_l);
+		result_l.put ("difficulty", badem::to_string_hex (result_difficulty_l));
+		auto result_multiplier_l (badem::difficulty::to_multiplier (result_difficulty_l, publish_threshold_a));
+		result_l.put ("multiplier", badem::to_string (result_multiplier_l));
+		work_l.add_child ("result", result_l);
+	}
+
+	boost::property_tree::ptree bad_peers_l;
+	for (auto & peer_text : bad_peers_a)
+	{
+		boost::property_tree::ptree entry;
+		entry.put ("", peer_text);
+		bad_peers_l.push_back (std::make_pair ("", entry));
+	}
+	work_l.add_child ("bad_peers", bad_peers_l);
+
+	message_l.contents.add_child ("message", work_l);
+	return message_l;
+}
+
+badem::websocket::message badem::websocket::message_builder::work_cancelled (badem::block_hash const & root_a, uint64_t const difficulty_a, uint64_t const publish_threshold_a, std::chrono::milliseconds const & duration_a, std::vector<std::string> const & bad_peers_a)
+{
+	return work_generation (root_a, 0, difficulty_a, publish_threshold_a, duration_a, "", bad_peers_a, false, true);
+}
+
+badem::websocket::message badem::websocket::message_builder::work_failed (badem::block_hash const & root_a, uint64_t const difficulty_a, uint64_t const publish_threshold_a, std::chrono::milliseconds const & duration_a, std::vector<std::string> const & bad_peers_a)
+{
+	return work_generation (root_a, 0, difficulty_a, publish_threshold_a, duration_a, "", bad_peers_a, false, false);
 }
 
 void badem::websocket::message_builder::set_common_fields (badem::websocket::message & message_a)
@@ -673,10 +741,10 @@ void badem::websocket::message_builder::set_common_fields (badem::websocket::mes
 	message_a.contents.add ("time", std::to_string (milli_since_epoch));
 }
 
-std::shared_ptr<std::string> badem::websocket::message::to_string () const
+std::string badem::websocket::message::to_string () const
 {
 	std::ostringstream ostream;
 	boost::property_tree::write_json (ostream, contents);
 	ostream.flush ();
-	return std::make_shared<std::string> (ostream.str ());
+	return ostream.str ();
 }

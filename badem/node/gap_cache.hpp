@@ -27,6 +27,7 @@ public:
 	std::chrono::steady_clock::time_point arrival;
 	badem::block_hash hash;
 	std::vector<badem::account> voters;
+	bool confirmed{ false };
 };
 
 /** Maintains voting and arrival information for gaps (missing source or previous blocks in account chains) */
@@ -34,10 +35,11 @@ class gap_cache final
 {
 public:
 	explicit gap_cache (badem::node &);
-	void add (badem::transaction const &, badem::block_hash const &, std::chrono::steady_clock::time_point = std::chrono::steady_clock::now ());
+	void add (badem::block_hash const &, std::chrono::steady_clock::time_point = std::chrono::steady_clock::now ());
 	void erase (badem::block_hash const & hash_a);
 	void vote (std::shared_ptr<badem::vote>);
-	badem::uint128_t bootstrap_threshold (badem::transaction const &);
+	bool bootstrap_check (std::vector<badem::account> const &, badem::block_hash const &);
+	badem::uint128_t bootstrap_threshold ();
 	size_t size ();
 	boost::multi_index_container<
 	badem::gap_information,

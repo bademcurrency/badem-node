@@ -25,13 +25,10 @@ std::string badem::error_system_messages::message (int ev) const
 /** Returns the node added. */
 std::shared_ptr<badem::node> badem::system::add_node (badem::node_config const & node_config_a, badem::node_flags node_flags_a, badem::transport::transport_type type_a)
 {
-	badem::node_init init;
-	auto node (std::make_shared<badem::node> (init, io_ctx, badem::unique_path (), alarm, node_config_a, work, node_flags_a));
-	assert (!init.error ());
+	auto node (std::make_shared<badem::node> (io_ctx, badem::unique_path (), alarm, node_config_a, work, node_flags_a));
+	assert (!node->init_error ());
 	node->start ();
-	badem::uint256_union wallet;
-	badem::random_pool::generate_block (wallet.bytes.data (), wallet.bytes.size ());
-	node->wallets.create (wallet);
+	node->wallets.create (badem::random_wallet_id ());
 	nodes.reserve (nodes.size () + 1);
 	nodes.push_back (node);
 	if (nodes.size () > 1)
@@ -54,7 +51,7 @@ std::shared_ptr<badem::node> badem::system::add_node (badem::node_config const &
 			else
 			{
 				// UDP connection
-				auto channel (std::make_shared<badem::transport::channel_udp> ((*j)->network.udp_channels, (*i)->network.endpoint ()));
+				auto channel (std::make_shared<badem::transport::channel_udp> ((*j)->network.udp_channels, (*i)->network.endpoint (), node1->network_params.protocol.protocol_version));
 				(*j)->network.send_keepalive (channel);
 			}
 			do
@@ -246,7 +243,7 @@ void badem::system::generate_rollback (badem::node & node_a, std::vector<badem::
 			assert (!error);
 			for (auto & i : rollback_list)
 			{
-				node_a.wallets.watcher.remove (i);
+				node_a.wallets.watcher->remove (i);
 				node_a.active.erase (*i);
 			}
 		}
@@ -258,9 +255,9 @@ void badem::system::generate_receive (badem::node & node_a)
 	std::shared_ptr<badem::block> send_block;
 	{
 		auto transaction (node_a.store.tx_begin_read ());
-		badem::uint256_union random_block;
-		random_pool::generate_block (random_block.bytes.data (), sizeof (random_block.bytes));
-		auto i (node_a.store.pending_begin (transaction, badem::pending_key (random_block, 0)));
+		badem::account random_account;
+		random_pool::generate_block (random_account.bytes.data (), sizeof (random_account.bytes));
+		auto i (node_a.store.pending_begin (transaction, badem::pending_key (random_account, 0)));
 		if (i != node_a.store.pending_end ())
 		{
 			badem::pending_key const & send_hash (i->first);
@@ -409,7 +406,7 @@ void badem::system::generate_mass_activity (uint32_t count_a, badem::node & node
 				auto transaction (node_a.store.tx_begin_read ());
 				auto block_counts (node_a.store.block_count (transaction));
 				count = block_counts.sum ();
-				state = block_counts.state_v0 + block_counts.state_v1;
+				state = block_counts.state;
 			}
 			std::cerr << boost::str (boost::format ("Mass activity iteration %1% us %2% us/t %3% state: %4% old: %5%\n") % i % us % (us / 256) % state % (count - state));
 			previous = now;
@@ -426,169 +423,6 @@ void badem::system::stop ()
 	}
 	work.stop ();
 }
-
-badem::landing_store::landing_store (badem::account const & source_a, badem::account const & destination_a, uint64_t start_a, uint64_t last_a) :
-source (source_a),
-destination (destination_a),
-start (start_a),
-last (last_a)
-{
-}
-
-badem::landing_store::landing_store (bool & error_a, std::istream & stream_a)
-{
-	error_a = deserialize (stream_a);
-}
-
-bool badem::landing_store::deserialize (std::istream & stream_a)
-{
-	bool result;
-	try
-	{
-		boost::property_tree::ptree tree;
-		boost::property_tree::read_json (stream_a, tree);
-		auto source_l (tree.get<std::string> ("source"));
-		auto destination_l (tree.get<std::string> ("destination"));
-		auto start_l (tree.get<std::string> ("start"));
-		auto last_l (tree.get<std::string> ("last"));
-		result = source.decode_account (source_l);
-		if (!result)
-		{
-			result = destination.decode_account (destination_l);
-			if (!result)
-			{
-				start = std::stoull (start_l);
-				last = std::stoull (last_l);
-			}
-		}
-	}
-	catch (std::logic_error const &)
-	{
-		result = true;
-	}
-	catch (std::runtime_error const &)
-	{
-		result = true;
-	}
-	return result;
-}
-
-void badem::landing_store::serialize (std::ostream & stream_a) const
-{
-	boost::property_tree::ptree tree;
-	tree.put ("source", source.to_account ());
-	tree.put ("destination", destination.to_account ());
-	tree.put ("start", std::to_string (start));
-	tree.put ("last", std::to_string (last));
-	boost::property_tree::write_json (stream_a, tree);
-}
-
-bool badem::landing_store::operator== (badem::landing_store const & other_a) const
-{
-	return source == other_a.source && destination == other_a.destination && start == other_a.start && last == other_a.last;
-}
-
-badem::landing::landing (badem::node & node_a, std::shared_ptr<badem::wallet> wallet_a, badem::landing_store & store_a, boost::filesystem::path const & path_a) :
-path (path_a),
-store (store_a),
-wallet (wallet_a),
-node (node_a)
-{
-}
-
-void badem::landing::write_store ()
-{
-	std::ofstream store_file;
-	store_file.open (path.string ());
-	if (!store_file.fail ())
-	{
-		store.serialize (store_file);
-	}
-	else
-	{
-		std::stringstream str;
-		store.serialize (str);
-		node.logger.always_log (boost::str (boost::format ("Error writing store file %1%") % str.str ()));
-	}
-}
-
-badem::uint128_t badem::landing::distribution_amount (uint64_t interval)
-{
-	// Halving period ~= Exponent of 2 in seconds approximately 1 year = 2^25 = 33554432
-	// Interval = Exponent of 2 in seconds approximately 1 minute = 2^10 = 64
-	uint64_t intervals_per_period (1 << (25 - interval_exponent));
-	badem::uint128_t result;
-	if (interval < intervals_per_period * 1)
-	{
-		// Total supply / 2^halving period / intervals per period
-		// 2^128 / 2^1 / (2^25 / 2^10)
-		result = badem::uint128_t (1) << (127 - (25 - interval_exponent)); // 50%
-	}
-	else if (interval < intervals_per_period * 2)
-	{
-		result = badem::uint128_t (1) << (126 - (25 - interval_exponent)); // 25%
-	}
-	else if (interval < intervals_per_period * 3)
-	{
-		result = badem::uint128_t (1) << (125 - (25 - interval_exponent)); // 13%
-	}
-	else if (interval < intervals_per_period * 4)
-	{
-		result = badem::uint128_t (1) << (124 - (25 - interval_exponent)); // 6.3%
-	}
-	else if (interval < intervals_per_period * 5)
-	{
-		result = badem::uint128_t (1) << (123 - (25 - interval_exponent)); // 3.1%
-	}
-	else if (interval < intervals_per_period * 6)
-	{
-		result = badem::uint128_t (1) << (122 - (25 - interval_exponent)); // 1.6%
-	}
-	else if (interval < intervals_per_period * 7)
-	{
-		result = badem::uint128_t (1) << (121 - (25 - interval_exponent)); // 0.8%
-	}
-	else if (interval < intervals_per_period * 8)
-	{
-		result = badem::uint128_t (1) << (121 - (25 - interval_exponent)); // 0.8*
-	}
-	else
-	{
-		result = 0;
-	}
-	return result;
-}
-
-void badem::landing::distribute_one ()
-{
-	auto now (badem::seconds_since_epoch ());
-	badem::block_hash last (1);
-	while (!last.is_zero () && store.last + distribution_interval.count () < now)
-	{
-		auto amount (distribution_amount ((store.last - store.start) >> interval_exponent));
-		last = wallet->send_sync (store.source, store.destination, amount);
-		if (!last.is_zero ())
-		{
-			node.logger.always_log (boost::str (boost::format ("Successfully distributed %1% in block %2%") % amount % last.to_string ()));
-			store.last += distribution_interval.count ();
-			write_store ();
-		}
-		else
-		{
-			node.logger.always_log ("Error while sending distribution");
-		}
-	}
-}
-
-void badem::landing::distribute_ongoing ()
-{
-	distribute_one ();
-	node.logger.always_log ("Waiting for next distribution cycle");
-	node.alarm.add (std::chrono::steady_clock::now () + sleep_seconds, [this]() { distribute_ongoing (); });
-}
-
-std::chrono::seconds constexpr badem::landing::distribution_interval;
-std::chrono::seconds constexpr badem::landing::sleep_seconds;
 
 namespace badem
 {

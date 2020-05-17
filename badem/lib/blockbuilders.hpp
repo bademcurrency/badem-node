@@ -133,33 +133,33 @@ public:
 	/** Sets all hashables, signature and work to zero. */
 	state_block_builder & zero ();
 	/** Set account */
-	state_block_builder & account (badem::account account);
+	state_block_builder & account (badem::account const & account);
 	/** Set account from hex representation of public key */
-	state_block_builder & account_hex (std::string account_hex);
-	/** Set account from an bdm_ or badem_ address */
-	state_block_builder & account_address (std::string account_address);
+	state_block_builder & account_hex (std::string const & account_hex);
+	/** Set account from a badem_ address */
+	state_block_builder & account_address (std::string const & account_address);
 	/** Set representative */
-	state_block_builder & representative (badem::account account);
+	state_block_builder & representative (badem::account const & account);
 	/** Set representative from hex representation of public key */
-	state_block_builder & representative_hex (std::string account_hex);
-	/** Set representative from an bdm_ or badem_ address */
-	state_block_builder & representative_address (std::string account_address);
+	state_block_builder & representative_hex (std::string const & account_hex);
+	/** Set representative from a badem_ address */
+	state_block_builder & representative_address (std::string const & account_address);
 	/** Set previous block hash */
-	state_block_builder & previous (badem::block_hash previous);
+	state_block_builder & previous (badem::block_hash const & previous);
 	/** Set previous block hash from hex representation */
-	state_block_builder & previous_hex (std::string previous_hex);
+	state_block_builder & previous_hex (std::string const & previous_hex);
 	/** Set balance */
-	state_block_builder & balance (badem::amount balance);
+	state_block_builder & balance (badem::amount const & balance);
 	/** Set balance from decimal string */
-	state_block_builder & balance_dec (std::string balance_decimal);
+	state_block_builder & balance_dec (std::string const & balance_decimal);
 	/** Set balance from hex string */
-	state_block_builder & balance_hex (std::string balance_hex);
+	state_block_builder & balance_hex (std::string const & balance_hex);
 	/** Set link */
-	state_block_builder & link (badem::uint256_union link);
+	state_block_builder & link (badem::link const & link);
 	/** Set link from hex representation */
-	state_block_builder & link_hex (std::string link_hex);
-	/** Set link from an bdm_ or badem_ address */
-	state_block_builder & link_address (std::string link_address);
+	state_block_builder & link_hex (std::string const & link_hex);
+	/** Set link from a badem_ address */
+	state_block_builder & link_address (std::string const & link_address);
 	/** Provides validation for build() */
 	void validate ();
 
@@ -181,13 +181,13 @@ public:
 	open_block_builder & account (badem::account account);
 	/** Set account from hex representation of public key */
 	open_block_builder & account_hex (std::string account_hex);
-	/** Set account from an bdm_ or badem_ address */
+	/** Set account from a badem_ address */
 	open_block_builder & account_address (std::string account_address);
 	/** Set representative */
 	open_block_builder & representative (badem::account account);
 	/** Set representative from hex representation of public key */
 	open_block_builder & representative_hex (std::string account_hex);
-	/** Set representative from an bdm_ or badem_ address */
+	/** Set representative from a badem_ address */
 	open_block_builder & representative_address (std::string account_address);
 	/** Set source block hash */
 	open_block_builder & source (badem::block_hash source);
@@ -214,7 +214,7 @@ public:
 	change_block_builder & representative (badem::account account);
 	/** Set representative from hex representation of public key */
 	change_block_builder & representative_hex (std::string account_hex);
-	/** Set representative from an bdm_ or badem_ address */
+	/** Set representative from a badem_ address */
 	change_block_builder & representative_address (std::string account_address);
 	/** Set previous block hash */
 	change_block_builder & previous (badem::block_hash previous);
@@ -241,7 +241,7 @@ public:
 	send_block_builder & destination (badem::account account);
 	/** Set destination from hex representation of public key */
 	send_block_builder & destination_hex (std::string account_hex);
-	/** Set destination from an bdm_ or badem_ address */
+	/** Set destination from a badem_ address */
 	send_block_builder & destination_address (std::string account_address);
 	/** Set previous block hash */
 	send_block_builder & previous (badem::block_hash previous);

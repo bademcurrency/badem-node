@@ -58,28 +58,12 @@ public:
 private:
 	badem::stat & stats;
 	std::mutex mutex;
-	std::condition_variable condition;
+	badem::condition_variable condition;
 	boost::circular_buffer<badem::message_buffer *> free;
 	boost::circular_buffer<badem::message_buffer *> full;
 	std::vector<uint8_t> slab;
 	std::vector<badem::message_buffer> entries;
 	bool stopped;
-};
-/**
-  * Response channels for TCP realtime network
-*/
-class response_channels final
-{
-public:
-	void add (badem::tcp_endpoint const &, std::vector<badem::tcp_endpoint>);
-	std::vector<badem::tcp_endpoint> search (badem::tcp_endpoint const &);
-	void remove (badem::tcp_endpoint const &);
-	size_t size ();
-	std::unique_ptr<seq_con_info_component> collect_seq_con_info (std::string const &);
-
-private:
-	std::mutex response_channels_mutex;
-	std::unordered_map<badem::tcp_endpoint, std::vector<badem::tcp_endpoint>> channels;
 };
 /**
   * Node ID cookies for node ID handshakes
@@ -132,7 +116,7 @@ public:
 		flood_message (publish, is_droppable_a);
 	}
 
-	void flood_block_batch (std::deque<std::shared_ptr<badem::block>>, unsigned = broadcast_interval_ms);
+	void flood_block_many (std::deque<std::shared_ptr<badem::block>>, std::function<void()> = nullptr, unsigned = broadcast_interval_ms);
 	void merge_peers (std::array<badem::endpoint, 8> const &);
 	void merge_peer (badem::endpoint const &);
 	void send_keepalive (std::shared_ptr<badem::transport::channel>);
@@ -141,8 +125,8 @@ public:
 	void send_confirm_req (std::shared_ptr<badem::transport::channel>, std::shared_ptr<badem::block>);
 	void broadcast_confirm_req (std::shared_ptr<badem::block>);
 	void broadcast_confirm_req_base (std::shared_ptr<badem::block>, std::shared_ptr<std::vector<std::shared_ptr<badem::transport::channel>>>, unsigned, bool = false);
-	void broadcast_confirm_req_batch (std::unordered_map<std::shared_ptr<badem::transport::channel>, std::vector<std::pair<badem::block_hash, badem::block_hash>>>, unsigned = broadcast_interval_ms, bool = false);
-	void broadcast_confirm_req_batch (std::deque<std::pair<std::shared_ptr<badem::block>, std::shared_ptr<std::vector<std::shared_ptr<badem::transport::channel>>>>>, unsigned = broadcast_interval_ms);
+	void broadcast_confirm_req_batched_many (std::unordered_map<std::shared_ptr<badem::transport::channel>, std::deque<std::pair<badem::block_hash, badem::root>>>, std::function<void()> = nullptr, unsigned = broadcast_interval_ms, bool = false);
+	void broadcast_confirm_req_many (std::deque<std::pair<std::shared_ptr<badem::block>, std::shared_ptr<std::vector<std::shared_ptr<badem::transport::channel>>>>>, std::function<void()> = nullptr, unsigned = broadcast_interval_ms);
 	void confirm_hashes (badem::transaction const &, std::shared_ptr<badem::transport::channel>, std::vector<badem::block_hash>);
 	bool send_votes_cache (std::shared_ptr<badem::transport::channel>, badem::block_hash const &);
 	std::shared_ptr<badem::transport::channel> find_node_id (badem::account const &);
@@ -157,10 +141,7 @@ public:
 	void random_fill (std::array<badem::endpoint, 8> &) const;
 	std::unordered_set<std::shared_ptr<badem::transport::channel>> random_set (size_t) const;
 	// Get the next peer for attempting a tcp bootstrap connection
-	badem::tcp_endpoint bootstrap_peer ();
-	// Response channels
-	badem::response_channels response_channels;
-	std::shared_ptr<badem::transport::channel> find_response_channel (badem::tcp_endpoint const &, badem::account const &);
+	badem::tcp_endpoint bootstrap_peer (bool = false);
 	badem::endpoint endpoint ();
 	void cleanup (std::chrono::steady_clock::time_point const &);
 	void ongoing_cleanup ();
@@ -180,6 +161,7 @@ public:
 	std::function<void()> disconnect_observer;
 	// Called when a new channel is observed
 	std::function<void(std::shared_ptr<badem::transport::channel>)> channel_observer;
+	std::atomic<bool> stopped{ false };
 	static unsigned const broadcast_interval_ms = 10;
 	static size_t const buffer_size = 512;
 	static size_t const confirm_req_hashes_max = 7;

@@ -8,10 +8,12 @@
 #include <boost/thread.hpp>
 
 #include <string>
+#include <vector>
 
 namespace badem
 {
 class jsonconfig;
+class tomlconfig;
 
 /** Configuration options for RPC TLS */
 class rpc_secure_config final
@@ -19,6 +21,8 @@ class rpc_secure_config final
 public:
 	badem::error serialize_json (badem::jsonconfig &) const;
 	badem::error deserialize_json (badem::jsonconfig &);
+	badem::error serialize_toml (badem::tomlconfig &) const;
+	badem::error deserialize_toml (badem::tomlconfig &);
 
 	/** If true, enable TLS */
 	bool enable{ false };
@@ -56,6 +60,8 @@ public:
 	explicit rpc_config (bool = false);
 	badem::error serialize_json (badem::jsonconfig &) const;
 	badem::error deserialize_json (bool & upgraded_a, badem::jsonconfig &);
+	badem::error serialize_toml (badem::tomlconfig &) const;
+	badem::error deserialize_toml (badem::tomlconfig &);
 
 	badem::rpc_process_config rpc_process;
 	boost::asio::ip::address_v6 address{ boost::asio::ip::address_v6::loopback () };
@@ -70,6 +76,7 @@ public:
 	}
 };
 
+badem::error read_rpc_config_toml (boost::filesystem::path const & data_path_a, badem::rpc_config & config_a, std::vector<std::string> const & config_overrides = std::vector<std::string> ());
 badem::error read_and_update_rpc_config (boost::filesystem::path const & data_path, badem::rpc_config & config_a);
 
 std::string get_default_rpc_filepath ();

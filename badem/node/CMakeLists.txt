@@ -1,5 +1,6 @@
 if (BADEM_ROCKSDB)
 	set (rocksdb_libs ${ROCKSDB_LIBRARIES} ${ZLIB_LIBRARIES})
+	set (rocksdb_sources rocksdb/rocksdb.hpp rocksdb/rocksdb.cpp rocksdb/rocksdb_iterator.hpp rocksdb/rocksdb_txn.hpp rocksdb/rocksdb_txn.cpp)
 endif ()
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
@@ -20,13 +21,22 @@ endif ()
 
 add_library (node
 	${platform_sources}
+	${rocksdb_sources}
 	active_transactions.hpp
 	active_transactions.cpp
 	blockprocessor.cpp
 	blockprocessor.hpp
 	blockprocessor.cpp
-	bootstrap.hpp
-	bootstrap.cpp
+	bootstrap/bootstrap_bulk_pull.hpp
+	bootstrap/bootstrap_bulk_pull.cpp
+	bootstrap/bootstrap_bulk_push.hpp
+	bootstrap/bootstrap_bulk_push.cpp
+	bootstrap/bootstrap_frontier.hpp
+	bootstrap/bootstrap_frontier.cpp
+	bootstrap/bootstrap_server.hpp
+	bootstrap/bootstrap_server.cpp
+	bootstrap/bootstrap.hpp
+	bootstrap/bootstrap.cpp
 	cli.hpp
 	cli.cpp
 	common.hpp
@@ -35,8 +45,8 @@ add_library (node
 	confirmation_height_processor.cpp
 	daemonconfig.hpp
 	daemonconfig.cpp
-	diagnosticsconfig.hpp
-	diagnosticsconfig.cpp
+	distributed_work.hpp
+	distributed_work.cpp
 	election.hpp
 	election.cpp
 	gap_cache.hpp
@@ -80,6 +90,8 @@ add_library (node
 	payment_observer_processor.cpp
 	portmapping.hpp
 	portmapping.cpp
+	node_pow_server_config.hpp
+	node_pow_server_config.cpp
 	repcrawler.hpp
 	repcrawler.cpp
 	testing.hpp
@@ -116,8 +128,8 @@ target_link_libraries (node
 	argon2
 	lmdb
 	Boost::filesystem
-	Boost::log
 	Boost::log_setup
+	Boost::log
 	Boost::program_options
 	Boost::system
 	Boost::thread
@@ -126,6 +138,10 @@ target_link_libraries (node
 	${CMAKE_DL_LIBS}
 	${psapi_lib}
 	)
+
+if (BADEM_STACKTRACE_BACKTRACE)
+	target_link_libraries(node backtrace)
+endif ()
 
 target_compile_definitions(node
 	PRIVATE

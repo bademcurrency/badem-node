@@ -59,7 +59,7 @@ void badem::socket::async_read (std::shared_ptr<std::vector<uint8_t>> buffer_a, 
 	}
 }
 
-void badem::socket::async_write (std::shared_ptr<std::vector<uint8_t>> buffer_a, std::function<void(boost::system::error_code const &, size_t)> callback_a)
+void badem::socket::async_write (badem::shared_const_buffer const & buffer_a, std::function<void(boost::system::error_code const &, size_t)> callback_a)
 {
 	auto this_l (shared_from_this ());
 	if (!closed)
@@ -86,9 +86,9 @@ void badem::socket::async_write (std::shared_ptr<std::vector<uint8_t>> buffer_a,
 		else
 		{
 			start_timer ();
-			boost::asio::async_write (tcp_socket, boost::asio::buffer (buffer_a->data (), buffer_a->size ()),
+			badem::async_write (tcp_socket, buffer_a,
 			boost::asio::bind_executor (strand,
-			[this_l, buffer_a, callback_a](boost::system::error_code const & ec, size_t size_a) {
+			[this_l, callback_a](boost::system::error_code const & ec, size_t size_a) {
 				if (auto node = this_l->node.lock ())
 				{
 					node->stats.add (badem::stat::type::traffic_tcp, badem::stat::dir::out, size_a);
@@ -110,7 +110,7 @@ void badem::socket::write_queued_messages ()
 		std::weak_ptr<badem::socket> this_w (shared_from_this ());
 		auto msg (send_queue.front ());
 		start_timer ();
-		boost::asio::async_write (tcp_socket, boost::asio::buffer (msg.buffer->data (), msg.buffer->size ()),
+		badem::async_write (tcp_socket, msg.buffer,
 		boost::asio::bind_executor (strand,
 		[msg, this_w](boost::system::error_code ec, std::size_t size_a) {
 			if (auto this_l = this_w.lock ())
@@ -223,9 +223,8 @@ void badem::socket::close ()
 // This must be called from a strand or the destructor
 void badem::socket::close_internal ()
 {
-	if (!closed)
+	if (!closed.exchange (true))
 	{
-		closed = true;
 		io_timeout = boost::none;
 		boost::system::error_code ec;
 

@@ -29,6 +29,18 @@ public:
 	badem::amount amount{ 0 };
 	badem::account destination{ 0 };
 };
+class pending_info_v14 final
+{
+public:
+	pending_info_v14 () = default;
+	pending_info_v14 (badem::account const &, badem::amount const &, badem::epoch);
+	size_t db_size () const;
+	bool deserialize (badem::stream &);
+	bool operator== (badem::pending_info_v14 const &) const;
+	badem::account source{ 0 };
+	badem::amount amount{ 0 };
+	badem::epoch epoch{ badem::epoch::epoch_0 };
+};
 class account_info_v5 final
 {
 public:
@@ -69,5 +81,26 @@ public:
 	uint64_t block_count{ 0 };
 	uint64_t confirmation_height{ 0 };
 	badem::epoch epoch{ badem::epoch::epoch_0 };
+};
+class block_sideband_v14 final
+{
+public:
+	block_sideband_v14 () = default;
+	block_sideband_v14 (badem::block_type, badem::account const &, badem::block_hash const &, badem::amount const &, uint64_t, uint64_t);
+	void serialize (badem::stream &) const;
+	bool deserialize (badem::stream &);
+	static size_t size (badem::block_type);
+	badem::block_type type{ badem::block_type::invalid };
+	badem::block_hash successor{ 0 };
+	badem::account account{ 0 };
+	badem::amount balance{ 0 };
+	uint64_t height{ 0 };
+	uint64_t timestamp{ 0 };
+};
+class state_block_w_sideband_v14
+{
+public:
+	std::shared_ptr<badem::state_block> state_block;
+	badem::block_sideband_v14 sideband;
 };
 }

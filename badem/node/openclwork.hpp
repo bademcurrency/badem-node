@@ -36,14 +36,15 @@ public:
 	void dump (std::ostream & stream);
 	std::vector<badem::opencl_platform> platforms;
 };
-union uint256_union;
+class root;
 class work_pool;
 class opencl_work
 {
 public:
 	opencl_work (bool &, badem::opencl_config const &, badem::opencl_environment &, badem::logger_mt &);
 	~opencl_work ();
-	boost::optional<uint64_t> generate_work (badem::uint256_union const &, uint64_t const);
+	boost::optional<uint64_t> generate_work (badem::root const &, uint64_t const);
+	boost::optional<uint64_t> generate_work (badem::root const &, uint64_t const, std::atomic<int> &);
 	static std::unique_ptr<opencl_work> create (bool, badem::opencl_config const &, badem::logger_mt &);
 	badem::opencl_config const & config;
 	std::mutex mutex;

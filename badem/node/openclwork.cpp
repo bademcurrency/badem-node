@@ -687,21 +687,28 @@ badem::opencl_work::~opencl_work ()
 	}
 }
 
-boost::optional<uint64_t> badem::opencl_work::generate_work (badem::uint256_union const & root_a, uint64_t const difficulty_a)
+boost::optional<uint64_t> badem::opencl_work::generate_work (badem::root const & root_a, uint64_t const difficulty_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	std::atomic<int> ticket_l{ 0 };
+	return generate_work (root_a, difficulty_a, ticket_l);
+}
+
+boost::optional<uint64_t> badem::opencl_work::generate_work (badem::root const & root_a, uint64_t const difficulty_a, std::atomic<int> & ticket_a)
+{
+	badem::lock_guard<std::mutex> lock (mutex);
 	bool error (false);
+	int ticket_l (ticket_a);
 	uint64_t result (0);
 	uint64_t computed_difficulty (0);
 	unsigned thread_count (config.threads);
 	size_t work_size[] = { thread_count, 0, 0 };
-	while ((badem::work_validate (root_a, result, &computed_difficulty) || computed_difficulty < difficulty_a) && !error)
+	while ((badem::work_validate (root_a, result, &computed_difficulty) || computed_difficulty < difficulty_a) && !error && ticket_a == ticket_l)
 	{
 		result = rand.next ();
 		cl_int write_error1 = clEnqueueWriteBuffer (queue, attempt_buffer, false, 0, sizeof (uint64_t), &result, 0, nullptr, nullptr);
 		if (write_error1 == CL_SUCCESS)
 		{
-			cl_int write_error2 = clEnqueueWriteBuffer (queue, item_buffer, false, 0, sizeof (badem::uint256_union), root_a.bytes.data (), 0, nullptr, nullptr);
+			cl_int write_error2 = clEnqueueWriteBuffer (queue, item_buffer, false, 0, sizeof (badem::root), root_a.bytes.data (), 0, nullptr, nullptr);
 			if (write_error2 == CL_SUCCESS)
 			{
 				cl_int write_error3 = clEnqueueWriteBuffer (queue, difficulty_buffer, false, 0, sizeof (uint64_t), &difficulty_a, 0, nullptr, nullptr);

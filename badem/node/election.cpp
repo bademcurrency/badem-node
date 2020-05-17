@@ -7,14 +7,14 @@ badem::election_vote_result::election_vote_result (bool replay_a, bool processed
 	processed = processed_a;
 }
 
-badem::election::election (badem::node & node_a, std::shared_ptr<badem::block> block_a, std::function<void(std::shared_ptr<badem::block>)> const & confirmation_action_a) :
+badem::election::election (badem::node & node_a, std::shared_ptr<badem::block> block_a, bool const skip_delay_a, std::function<void(std::shared_ptr<badem::block>)> const & confirmation_action_a) :
 confirmation_action (confirmation_action_a),
 node (node_a),
 election_start (std::chrono::steady_clock::now ()),
-status ({ block_a, 0, std::chrono::duration_cast<std::chrono::milliseconds> (std::chrono::system_clock::now ().time_since_epoch ()), std::chrono::duration_values<std::chrono::milliseconds>::zero (), badem::election_status_type::ongoing }),
+status ({ block_a, 0, std::chrono::duration_cast<std::chrono::milliseconds> (std::chrono::system_clock::now ().time_since_epoch ()), std::chrono::duration_values<std::chrono::milliseconds>::zero (), 0, badem::election_status_type::ongoing }),
+skip_delay (skip_delay_a),
 confirmed (false),
-stopped (false),
-confirmation_request_count (0)
+stopped (false)
 {
 	last_votes.insert (std::make_pair (node.network_params.random.not_an_account, badem::vote_info{ std::chrono::steady_clock::now (), 0, block_a->hash () }));
 	blocks.insert (std::make_pair (block_a->hash (), block_a));
@@ -25,9 +25,9 @@ void badem::election::compute_rep_votes (badem::transaction const & transaction_
 {
 	if (node.config.enable_voting)
 	{
-		node.wallets.foreach_representative (transaction_a, [this, &transaction_a](badem::public_key const & pub_a, badem::raw_key const & prv_a) {
+		node.wallets.foreach_representative ([this, &transaction_a](badem::public_key const & pub_a, badem::raw_key const & prv_a) {
 			auto vote (this->node.store.vote_generate (transaction_a, pub_a, prv_a, status.winner));
-			this->node.vote_processor.vote (vote, std::make_shared<badem::transport::channel_udp> (this->node.network.udp_channels, this->node.network.endpoint ()));
+			this->node.vote_processor.vote (vote, std::make_shared<badem::transport::channel_udp> (this->node.network.udp_channels, this->node.network.endpoint (), this->node.network_params.protocol.protocol_version));
 		});
 	}
 }
@@ -38,6 +38,7 @@ void badem::election::confirm_once (badem::election_status_type type_a)
 	{
 		status.election_end = std::chrono::duration_cast<std::chrono::milliseconds> (std::chrono::system_clock::now ().time_since_epoch ());
 		status.election_duration = std::chrono::duration_cast<std::chrono::milliseconds> (std::chrono::steady_clock::now () - election_start);
+		status.confirmation_request_count = confirmation_request_count;
 		status.type = type_a;
 		auto status_l (status);
 		auto node_l (node.shared ());
@@ -46,12 +47,8 @@ void badem::election::confirm_once (badem::election_status_type type_a)
 			node_l->process_confirmed (status_l);
 			confirmation_action_l (status_l.winner);
 		});
-		if (confirmation_request_count > node.active.high_confirmation_request_count)
-		{
-			--node.active.long_unconfirmed_size;
-		}
 		auto root (status.winner->qualified_root ());
-		node.active.add_confirmed (status, root);
+		node.active.pending_conf_height.emplace (status.winner->hash (), shared_from_this ());
 		clear_blocks ();
 		clear_dependent ();
 		node.active.roots.erase (root);
@@ -65,6 +62,7 @@ void badem::election::stop ()
 		stopped = true;
 		status.election_end = std::chrono::duration_cast<std::chrono::milliseconds> (std::chrono::system_clock::now ().time_since_epoch ());
 		status.election_duration = std::chrono::duration_cast<std::chrono::milliseconds> (std::chrono::steady_clock::now () - election_start);
+		status.confirmation_request_count = confirmation_request_count;
 		status.type = badem::election_status_type::stopped;
 	}
 }
@@ -83,12 +81,12 @@ bool badem::election::have_quorum (badem::tally_t const & tally_a, badem::uint12
 	return result;
 }
 
-badem::tally_t badem::election::tally (badem::transaction const & transaction_a)
+badem::tally_t badem::election::tally ()
 {
 	std::unordered_map<badem::block_hash, badem::uint128_t> block_weights;
 	for (auto vote_info : last_votes)
 	{
-		block_weights[vote_info.second.hash] += node.ledger.weight (transaction_a, vote_info.first);
+		block_weights[vote_info.second.hash] += node.ledger.weight (vote_info.first);
 	}
 	last_tally = block_weights;
 	badem::tally_t result;
@@ -103,9 +101,9 @@ badem::tally_t badem::election::tally (badem::transaction const & transaction_a)
 	return result;
 }
 
-void badem::election::confirm_if_quorum (badem::transaction const & transaction_a)
+void badem::election::confirm_if_quorum ()
 {
-	auto tally_l (tally (transaction_a));
+	auto tally_l (tally ());
 	assert (!tally_l.empty ());
 	auto winner (tally_l.begin ());
 	auto block_l (winner->second);
@@ -136,14 +134,15 @@ void badem::election::confirm_if_quorum (badem::transaction const & transaction_
 void badem::election::log_votes (badem::tally_t const & tally_a) const
 {
 	std::stringstream tally;
-	tally << boost::str (boost::format ("\nVote tally for root %1%") % status.winner->root ().to_string ());
+	std::string line_end (node.config.logging.single_line_record () ? "\t" : "\n");
+	tally << boost::str (boost::format ("%1%Vote tally for root %2%") % line_end % status.winner->root ().to_string ());
 	for (auto i (tally_a.begin ()), n (tally_a.end ()); i != n; ++i)
 	{
-		tally << boost::str (boost::format ("\nBlock %1% weight %2%") % i->second->hash ().to_string () % i->first.convert_to<std::string> ());
+		tally << boost::str (boost::format ("%1%Block %2% weight %3%") % line_end % i->second->hash ().to_string () % i->first.convert_to<std::string> ());
 	}
 	for (auto i (last_votes.begin ()), n (last_votes.end ()); i != n; ++i)
 	{
-		tally << boost::str (boost::format ("\n%1% %2%") % i->first.to_account () % i->second.hash.to_string ());
+		tally << boost::str (boost::format ("%1%%2% %3%") % line_end % i->first.to_account () % i->second.hash.to_string ());
 	}
 	node.logger.try_log (tally.str ());
 }
@@ -151,10 +150,9 @@ void badem::election::log_votes (badem::tally_t const & tally_a) const
 badem::election_vote_result badem::election::vote (badem::account rep, uint64_t sequence, badem::block_hash block_hash)
 {
 	// see republish_vote documentation for an explanation of these rules
-	auto transaction (node.store.tx_begin_read ());
 	auto replay (false);
 	auto online_stake (node.online_reps.online_stake ());
-	auto weight (node.ledger.weight (transaction, rep));
+	auto weight (node.ledger.weight (rep));
 	auto should_process (false);
 	if (node.network_params.network.is_test_network () || weight > node.minimum_principal_weight (online_stake))
 	{
@@ -193,10 +191,11 @@ badem::election_vote_result badem::election::vote (badem::account rep, uint64_t 
 		}
 		if (should_process)
 		{
+			node.stats.inc (badem::stat::type::election, badem::stat::detail::vote_new);
 			last_votes[rep] = { std::chrono::steady_clock::now (), sequence, block_hash };
 			if (!confirmed)
 			{
-				confirm_if_quorum (transaction);
+				confirm_if_quorum ();
 			}
 		}
 	}
@@ -222,7 +221,7 @@ bool badem::election::publish (std::shared_ptr<badem::block> block_a)
 			if (blocks.find (block_a->hash ()) == blocks.end ())
 			{
 				blocks.insert (std::make_pair (block_a->hash (), block_a));
-				confirm_if_quorum (transaction);
+				confirm_if_quorum ();
 				node.network.flood_block (block_a, false);
 			}
 			else
@@ -236,7 +235,7 @@ bool badem::election::publish (std::shared_ptr<badem::block> block_a)
 
 size_t badem::election::last_votes_size ()
 {
-	std::lock_guard<std::mutex> lock (node.active.mutex);
+	badem::lock_guard<std::mutex> lock (node.active.mutex);
 	return last_votes.size ();
 }
 
@@ -296,5 +295,29 @@ void badem::election::clear_blocks ()
 		{
 			node.observers.active_stopped.notify (hash);
 		}
+	}
+}
+
+void badem::election::insert_inactive_votes_cache ()
+{
+	auto winner_hash (status.winner->hash ());
+	auto cache (node.active.find_inactive_votes_cache (winner_hash));
+	for (auto & rep : cache.voters)
+	{
+		auto inserted (last_votes.emplace (rep, badem::vote_info{ std::chrono::steady_clock::time_point::min (), 0, winner_hash }));
+		if (inserted.second)
+		{
+			node.stats.inc (badem::stat::type::election, badem::stat::detail::vote_cached);
+		}
+	}
+	if (!confirmed && !cache.voters.empty ())
+	{
+		auto delay (std::chrono::duration_cast<std::chrono::seconds> (std::chrono::steady_clock::now () - cache.arrival));
+		if (delay > late_blocks_delay)
+		{
+			node.stats.inc (badem::stat::type::election, badem::stat::detail::late_block);
+			node.stats.add (badem::stat::type::election, badem::stat::detail::late_block_seconds, badem::stat::dir::in, delay.count (), true);
+		}
+		confirm_if_quorum ();
 	}
 }

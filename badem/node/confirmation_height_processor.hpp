@@ -1,6 +1,8 @@
 #pragma once
 
 #include <badem/lib/numbers.hpp>
+#include <badem/node/active_transactions.hpp>
+#include <badem/secure/blockstore.hpp>
 #include <badem/secure/common.hpp>
 
 #include <condition_variable>
@@ -10,8 +12,7 @@
 
 namespace badem
 {
-class block_store;
-class stat;
+class ledger;
 class active_transactions;
 class read_transaction;
 class logger_mt;
@@ -31,6 +32,8 @@ private:
 	badem::block_hash current_hash{ 0 };
 	friend class confirmation_height_processor;
 	friend class confirmation_height_pending_observer_callbacks_Test;
+	friend class confirmation_height_dependent_election_Test;
+	friend class confirmation_height_dependent_election_after_already_cemented_Test;
 };
 
 std::unique_ptr<seq_con_info_component> collect_seq_con_info (pending_confirmation_height &, const std::string &);
@@ -38,10 +41,12 @@ std::unique_ptr<seq_con_info_component> collect_seq_con_info (pending_confirmati
 class confirmation_height_processor final
 {
 public:
-	confirmation_height_processor (pending_confirmation_height &, badem::block_store &, badem::stat &, badem::active_transactions &, badem::block_hash const &, badem::write_database_queue &, std::chrono::milliseconds, badem::logger_mt &);
+	confirmation_height_processor (pending_confirmation_height &, badem::ledger &, badem::active_transactions &, badem::write_database_queue &, std::chrono::milliseconds, badem::logger_mt &);
 	~confirmation_height_processor ();
 	void add (badem::block_hash const &);
 	void stop ();
+	void pause ();
+	void unpause ();
 
 	/** The maximum amount of accounts to iterate over while writing */
 	static uint64_t constexpr batch_write_size = 2048;
@@ -50,15 +55,25 @@ public:
 	static uint64_t constexpr batch_read_size = 4096;
 
 private:
+	class callback_data final
+	{
+	public:
+		callback_data (std::shared_ptr<badem::block> const &, badem::block_sideband const &, badem::election_status_type);
+		std::shared_ptr<badem::block> block;
+		badem::block_sideband sideband;
+		badem::election_status_type election_status_type;
+	};
+
 	class conf_height_details final
 	{
 	public:
-		conf_height_details (badem::account const &, badem::block_hash const &, uint64_t, uint64_t);
+		conf_height_details (badem::account const &, badem::block_hash const &, uint64_t, uint64_t, std::vector<callback_data> const &);
 
 		badem::account account;
 		badem::block_hash hash;
 		uint64_t height;
 		uint64_t num_blocks_confirmed;
+		std::vector<callback_data> block_callbacks_required;
 	};
 
 	class receive_source_pair final
@@ -78,13 +93,12 @@ private:
 		uint64_t iterated_height;
 	};
 
-	std::condition_variable condition;
+	badem::condition_variable condition;
 	badem::pending_confirmation_height & pending_confirmations;
 	std::atomic<bool> stopped{ false };
-	badem::block_store & store;
-	badem::stat & stats;
+	std::atomic<bool> paused{ false };
+	badem::ledger & ledger;
 	badem::active_transactions & active;
-	badem::block_hash const & epoch_link;
 	badem::logger_mt & logger;
 	std::atomic<uint64_t> receive_source_pairs_size{ 0 };
 	std::vector<receive_source_pair> receive_source_pairs;
@@ -100,7 +114,7 @@ private:
 
 	void run ();
 	void add_confirmation_height (badem::block_hash const &);
-	void collect_unconfirmed_receive_and_sources_for_account (uint64_t, uint64_t, badem::block_hash const &, badem::account const &, badem::read_transaction const &);
+	void collect_unconfirmed_receive_and_sources_for_account (uint64_t, uint64_t, badem::block_hash const &, badem::account const &, badem::read_transaction const &, std::vector<callback_data> &);
 	bool write_pending (std::deque<conf_height_details> &);
 
 	friend std::unique_ptr<seq_con_info_component> collect_seq_con_info (confirmation_height_processor &, const std::string &);

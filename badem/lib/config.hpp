@@ -69,7 +69,7 @@ public:
 		default_rpc_port = is_live_network () ? 2225 : is_beta_network () ? 55000 : 45000;
 		default_ipc_port = is_live_network () ? 7077 : is_beta_network () ? 56000 : 46000;
 		default_websocket_port = is_live_network () ? 7078 : is_beta_network () ? 57000 : 47000;
-		request_interval_ms = is_test_network () ? (is_sanitizer_build ? 100 : 20) : 16000;
+		request_interval_ms = is_test_network () ? (is_sanitizer_build ? 100 : 20) : 500;
 	}
 
 	/** Network work thresholds. ~5 seconds of work for the live network */
@@ -160,6 +160,21 @@ inline boost::filesystem::path get_config_path (boost::filesystem::path const & 
 inline boost::filesystem::path get_rpc_config_path (boost::filesystem::path const & data_path)
 {
 	return data_path / "rpc_config.json";
+}
+
+inline boost::filesystem::path get_node_toml_config_path (boost::filesystem::path const & data_path)
+{
+	return data_path / "config-node.toml";
+}
+
+inline boost::filesystem::path get_rpc_toml_config_path (boost::filesystem::path const & data_path)
+{
+	return data_path / "config-rpc.toml";
+}
+
+inline boost::filesystem::path get_qtwallet_toml_config_path (boost::filesystem::path const & data_path)
+{
+	return data_path / "config-qtwallet.toml";
 }
 
 /** Called by gtest_main to enforce test network */

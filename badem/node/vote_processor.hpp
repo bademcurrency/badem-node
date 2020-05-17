@@ -40,7 +40,7 @@ private:
 	std::unordered_set<badem::account> representatives_1;
 	std::unordered_set<badem::account> representatives_2;
 	std::unordered_set<badem::account> representatives_3;
-	std::condition_variable condition;
+	badem::condition_variable condition;
 	std::mutex mutex;
 	bool started;
 	bool stopped;

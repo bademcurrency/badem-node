@@ -10,5 +10,6 @@ std::unique_ptr<badem::seq_con_info_component> badem::collect_seq_con_info (bade
 	composite->add_component (collect_seq_con_info (node_observers.account_balance, "account_balance"));
 	composite->add_component (collect_seq_con_info (node_observers.endpoint, "endpoint"));
 	composite->add_component (collect_seq_con_info (node_observers.disconnect, "disconnect"));
+	composite->add_component (collect_seq_con_info (node_observers.work_cancel, "work_cancel"));
 	return composite;
 }

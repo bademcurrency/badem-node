@@ -8,6 +8,28 @@
 #include <fstream>
 
 using namespace std::chrono_literals;
+unsigned constexpr badem::wallet_store::version_current;
+
+TEST (wallet, no_special_keys_accounts)
+{
+	bool init;
+	badem::mdb_env env (init, badem::unique_path ());
+	ASSERT_FALSE (init);
+	auto transaction (env.tx_begin_write ());
+	badem::kdf kdf;
+	badem::wallet_store wallet (init, kdf, transaction, badem::genesis_account, 1, "0");
+	ASSERT_FALSE (init);
+	badem::keypair key1;
+	ASSERT_FALSE (wallet.exists (transaction, key1.pub));
+	wallet.insert_adhoc (transaction, key1.prv);
+	ASSERT_TRUE (wallet.exists (transaction, key1.pub));
+
+	for (uint64_t account = 0; account < badem::wallet_store::special_count; account++)
+	{
+		badem::account account_l (account);
+		ASSERT_FALSE (wallet.exists (transaction, account_l));
+	}
+}
 
 TEST (wallet, no_key)
 {
@@ -123,20 +145,20 @@ TEST (wallet, two_item_iteration)
 		wallet.insert_adhoc (transaction, key2.prv);
 		for (auto i (wallet.begin (transaction)), j (wallet.end ()); i != j; ++i)
 		{
-			pubs.insert (badem::uint256_union (i->first));
+			pubs.insert (i->first);
 			badem::raw_key password;
 			wallet.wallet_key (password, transaction);
 			badem::raw_key key;
-			key.decrypt (badem::wallet_value (i->second).key, password, (badem::uint256_union (i->first)).owords[0].number ());
-			prvs.insert (key.data);
+			key.decrypt (badem::wallet_value (i->second).key, password, (i->first).owords[0].number ());
+			prvs.insert (key.as_private_key ());
 		}
 	}
 	ASSERT_EQ (2, pubs.size ());
 	ASSERT_EQ (2, prvs.size ());
 	ASSERT_NE (pubs.end (), pubs.find (key1.pub));
-	ASSERT_NE (prvs.end (), prvs.find (key1.prv.data));
+	ASSERT_NE (prvs.end (), prvs.find (key1.prv.as_private_key ()));
 	ASSERT_NE (pubs.end (), pubs.find (key2.pub));
-	ASSERT_NE (prvs.end (), prvs.find (key2.prv.data));
+	ASSERT_NE (prvs.end (), prvs.find (key2.prv.as_private_key ()));
 }
 
 TEST (wallet, insufficient_spend_one)
@@ -214,10 +236,10 @@ TEST (wallet, change)
 	badem::system system (24000, 1);
 	system.wallet (0)->insert_adhoc (badem::test_genesis_key.prv);
 	badem::keypair key2;
-	auto block1 (system.nodes[0]->representative (badem::test_genesis_key.pub));
+	auto block1 (system.nodes[0]->rep_block (badem::test_genesis_key.pub));
 	ASSERT_FALSE (block1.is_zero ());
 	ASSERT_NE (nullptr, system.wallet (0)->change_action (badem::test_genesis_key.pub, key2.pub));
-	auto block2 (system.nodes[0]->representative (badem::test_genesis_key.pub));
+	auto block2 (system.nodes[0]->rep_block (badem::test_genesis_key.pub));
 	ASSERT_FALSE (block2.is_zero ());
 	ASSERT_NE (block1, block2);
 }
@@ -259,7 +281,7 @@ TEST (wallet, find_none)
 	badem::kdf kdf;
 	badem::wallet_store wallet (init, kdf, transaction, badem::genesis_account, 1, "0");
 	ASSERT_FALSE (init);
-	badem::uint256_union account (1000);
+	badem::account account (1000);
 	ASSERT_EQ (wallet.end (), wallet.find (transaction, account));
 }
 
@@ -310,48 +332,6 @@ TEST (wallet, rekey)
 	ASSERT_EQ (key1.prv, prv2);
 	*wallet.password.values[0] = 2;
 	ASSERT_TRUE (wallet.rekey (transaction, "2"));
-}
-
-TEST (account, encode_zero)
-{
-	badem::uint256_union number0 (0);
-	std::string str0;
-	number0.encode_account (str0);
-
-	/*
-	 * Handle different lengths for "bdm_" prefixed and "badem_" prefixed accounts
-	 */
-	ASSERT_EQ ((str0.front () == 'b') ? 64 : 65, str0.size ());
-	ASSERT_EQ (65, str0.size ());
-	badem::uint256_union number1;
-	ASSERT_FALSE (number1.decode_account (str0));
-	ASSERT_EQ (number0, number1);
-}
-
-TEST (account, encode_all)
-{
-	badem::uint256_union number0;
-	number0.decode_hex ("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
-	std::string str0;
-	number0.encode_account (str0);
-
-	/*
-	 * Handle different lengths for "bdm_" prefixed and "badem_" prefixed accounts
-	 */
-	ASSERT_EQ ((str0.front () == 'b') ? 64 : 65, str0.size ());
-	badem::uint256_union number1;
-	ASSERT_FALSE (number1.decode_account (str0));
-	ASSERT_EQ (number0, number1);
-}
-
-TEST (account, encode_fail)
-{
-	badem::uint256_union number0 (0);
-	std::string str0;
-	number0.encode_account (str0);
-	str0[16] ^= 1;
-	badem::uint256_union number1;
-	ASSERT_TRUE (number1.decode_account (str0));
 }
 
 TEST (wallet, hash_password)
@@ -617,7 +597,7 @@ TEST (wallet, work)
 	wallet->insert_adhoc (badem::test_genesis_key.prv);
 	badem::genesis genesis;
 	auto done (false);
-	system.deadline_set (10s);
+	system.deadline_set (20s);
 	while (!done)
 	{
 		auto transaction (system.wallet (0)->wallets.tx_begin_read ());
@@ -698,7 +678,7 @@ TEST (wallet, version_1_upgrade)
 	wallet->store.version_put (transaction, 1);
 	wallet->enter_password (transaction, "1");
 	ASSERT_TRUE (wallet->store.valid_password (transaction));
-	ASSERT_EQ (wallet->store.version_current, wallet->store.version (transaction));
+	ASSERT_EQ (badem::wallet_store::version_current, wallet->store.version (transaction));
 	badem::raw_key prv;
 	ASSERT_FALSE (wallet->store.fetch (transaction, key.pub, prv));
 	ASSERT_EQ (key.prv, prv);
@@ -710,7 +690,7 @@ TEST (wallet, version_1_upgrade)
 	wallet->store.version_put (transaction, 1);
 	wallet->enter_password (transaction, "1");
 	ASSERT_TRUE (wallet->store.valid_password (transaction));
-	ASSERT_EQ (wallet->store.version_current, wallet->store.version (transaction));
+	ASSERT_EQ (badem::wallet_store::version_current, wallet->store.version (transaction));
 	badem::raw_key prv2;
 	ASSERT_FALSE (wallet->store.fetch (transaction, key.pub, prv2));
 	ASSERT_EQ (key.prv, prv2);
@@ -724,13 +704,10 @@ TEST (wallet, deterministic_keys)
 	auto transaction (env.tx_begin_write ());
 	badem::kdf kdf;
 	badem::wallet_store wallet (init, kdf, transaction, badem::genesis_account, 1, "0");
-	badem::raw_key key1;
-	wallet.deterministic_key (key1, transaction, 0);
-	badem::raw_key key2;
-	wallet.deterministic_key (key2, transaction, 0);
+	auto key1 = wallet.deterministic_key (transaction, 0);
+	auto key2 = wallet.deterministic_key (transaction, 0);
 	ASSERT_EQ (key1, key2);
-	badem::raw_key key3;
-	wallet.deterministic_key (key3, transaction, 1);
+	auto key3 = wallet.deterministic_key (transaction, 1);
 	ASSERT_NE (key1, key3);
 	ASSERT_EQ (0, wallet.deterministic_index_get (transaction));
 	wallet.deterministic_index_set (transaction, 1);
@@ -738,7 +715,7 @@ TEST (wallet, deterministic_keys)
 	auto key4 (wallet.deterministic_insert (transaction));
 	badem::raw_key key5;
 	ASSERT_FALSE (wallet.fetch (transaction, key4, key5));
-	ASSERT_EQ (key3, key5);
+	ASSERT_EQ (key3, key5.as_private_key ());
 	ASSERT_EQ (2, wallet.deterministic_index_get (transaction));
 	wallet.deterministic_index_set (transaction, 1);
 	ASSERT_EQ (1, wallet.deterministic_index_get (transaction));
@@ -818,12 +795,12 @@ TEST (wallet, version_2_upgrade)
 	wallet->store.erase (transaction, badem::wallet_store::seed_special);
 	wallet->store.version_put (transaction, 2);
 	ASSERT_EQ (2, wallet->store.version (transaction));
-	ASSERT_FALSE (wallet->store.exists (transaction, badem::wallet_store::deterministic_index_special));
-	ASSERT_FALSE (wallet->store.exists (transaction, badem::wallet_store::seed_special));
+	ASSERT_EQ (wallet->store.find (transaction, badem::wallet_store::deterministic_index_special), wallet->store.end ());
+	ASSERT_EQ (wallet->store.find (transaction, badem::wallet_store::seed_special), wallet->store.end ());
 	wallet->store.attempt_password (transaction, "1");
-	ASSERT_EQ (wallet->store.version_current, wallet->store.version (transaction));
-	ASSERT_TRUE (wallet->store.exists (transaction, badem::wallet_store::deterministic_index_special));
-	ASSERT_TRUE (wallet->store.exists (transaction, badem::wallet_store::seed_special));
+	ASSERT_EQ (badem::wallet_store::version_current, wallet->store.version (transaction));
+	ASSERT_NE (wallet->store.find (transaction, badem::wallet_store::deterministic_index_special), wallet->store.end ());
+	ASSERT_NE (wallet->store.find (transaction, badem::wallet_store::seed_special), wallet->store.end ());
 	ASSERT_FALSE (wallet->deterministic_insert (transaction).is_zero ());
 }
 
@@ -835,7 +812,7 @@ TEST (wallet, version_3_upgrade)
 	wallet->store.rekey (transaction, "1");
 	wallet->enter_password (transaction, "1");
 	ASSERT_TRUE (wallet->store.valid_password (transaction));
-	ASSERT_EQ (wallet->store.version_current, wallet->store.version (transaction));
+	ASSERT_EQ (badem::wallet_store::version_current, wallet->store.version (transaction));
 	badem::keypair key;
 	badem::raw_key seed;
 	badem::uint256_union seed_ciphertext;
@@ -853,7 +830,7 @@ TEST (wallet, version_3_upgrade)
 	wallet->store.version_put (transaction, 3);
 	wallet->enter_password (transaction, "1");
 	ASSERT_TRUE (wallet->store.valid_password (transaction));
-	ASSERT_EQ (wallet->store.version_current, wallet->store.version (transaction));
+	ASSERT_EQ (badem::wallet_store::version_current, wallet->store.version (transaction));
 	badem::raw_key prv;
 	ASSERT_FALSE (wallet->store.fetch (transaction, key.pub, prv));
 	ASSERT_EQ (key.prv, prv);
@@ -861,6 +838,63 @@ TEST (wallet, version_3_upgrade)
 	wallet->store.seed (seed_compare, transaction);
 	ASSERT_EQ (seed, seed_compare);
 	ASSERT_NE (seed_ciphertext, wallet->store.entry_get_raw (transaction, badem::wallet_store::seed_special).key);
+}
+
+TEST (wallet, upgrade_backup)
+{
+	badem::system system (24000, 1);
+	auto dir (badem::unique_path ());
+	namespace fs = boost::filesystem;
+	fs::create_directory (dir);
+	/** Returns 'dir' if backup file cannot be found */
+	// clang-format off
+	auto get_backup_path = [&dir]() {
+		for (fs::directory_iterator itr (dir); itr != fs::directory_iterator (); ++itr)
+		{
+			if (itr->path ().filename ().string ().find ("wallets_backup_") != std::string::npos)
+			{
+				return itr->path ();
+			}
+		}
+		return dir;
+	};
+	// clang-format on
+
+	auto wallet_id = badem::random_wallet_id ();
+	{
+		auto node1 (std::make_shared<badem::node> (system.io_ctx, 24001, dir, system.alarm, system.logging, system.work));
+		ASSERT_FALSE (node1->init_error ());
+		auto wallet (node1->wallets.create (wallet_id));
+		ASSERT_NE (nullptr, wallet);
+		auto transaction (node1->wallets.tx_begin_write ());
+		wallet->store.version_put (transaction, 3);
+	}
+	ASSERT_EQ (get_backup_path ().string (), dir.string ());
+
+	// Check with config backup_before_upgrade = false
+	{
+		auto node1 (std::make_shared<badem::node> (system.io_ctx, 24001, dir, system.alarm, system.logging, system.work));
+		ASSERT_FALSE (node1->init_error ());
+		auto wallet (node1->wallets.open (wallet_id));
+		ASSERT_NE (nullptr, wallet);
+		auto transaction (node1->wallets.tx_begin_write ());
+		ASSERT_LT (3u, wallet->store.version (transaction));
+		wallet->store.version_put (transaction, 3);
+	}
+	ASSERT_EQ (get_backup_path ().string (), dir.string ());
+
+	// Now do the upgrade and confirm that backup is saved
+	{
+		badem::node_config node_config (24001, system.logging);
+		node_config.backup_before_upgrade = true;
+		auto node1 (std::make_shared<badem::node> (system.io_ctx, dir, system.alarm, node_config, system.work));
+		ASSERT_FALSE (node1->init_error ());
+		auto wallet (node1->wallets.open (wallet_id));
+		ASSERT_NE (nullptr, wallet);
+		auto transaction (node1->wallets.tx_begin_read ());
+		ASSERT_LT (3u, wallet->store.version (transaction));
+	}
+	ASSERT_NE (get_backup_path ().string (), dir.string ());
 }
 
 TEST (wallet, no_work)
@@ -885,8 +919,8 @@ TEST (wallet, send_race)
 	badem::keypair key2;
 	for (auto i (1); i < 60; ++i)
 	{
-		ASSERT_NE (nullptr, system.wallet (0)->send_action (badem::test_genesis_key.pub, key2.pub, badem::kBDM_ratio));
-		ASSERT_EQ (badem::genesis_amount - badem::kBDM_ratio * i, system.nodes[0]->balance (badem::test_genesis_key.pub));
+		ASSERT_NE (nullptr, system.wallet (0)->send_action (badem::test_genesis_key.pub, key2.pub, badem::Gbdm_ratio));
+		ASSERT_EQ (badem::genesis_amount - badem::Gbdm_ratio * i, system.nodes[0]->balance (badem::test_genesis_key.pub));
 	}
 }
 
@@ -895,7 +929,7 @@ TEST (wallet, password_race)
 	badem::system system (24000, 1);
 	badem::thread_runner runner (system.io_ctx, system.nodes[0]->config.io_threads);
 	auto wallet = system.wallet (0);
-	system.nodes[0]->background ([&wallet]() {
+	std::thread thread ([&wallet]() {
 		for (int i = 0; i < 100; i++)
 		{
 			auto transaction (wallet->wallets.tx_begin_write ());
@@ -913,6 +947,7 @@ TEST (wallet, password_race)
 			break;
 		}
 	}
+	thread.join ();
 	system.stop ();
 	runner.join ();
 }
@@ -929,29 +964,34 @@ TEST (wallet, password_race_corrupt_seed)
 		wallet->store.seed (seed, transaction);
 		ASSERT_FALSE (wallet->store.attempt_password (transaction, "4567"));
 	}
+	std::vector<std::thread> threads;
 	for (int i = 0; i < 100; i++)
 	{
-		system.nodes[0]->background ([&wallet]() {
+		threads.emplace_back ([&wallet]() {
 			for (int i = 0; i < 10; i++)
 			{
 				auto transaction (wallet->wallets.tx_begin_write ());
 				wallet->store.rekey (transaction, "0000");
 			}
 		});
-		system.nodes[0]->background ([&wallet]() {
+		threads.emplace_back ([&wallet]() {
 			for (int i = 0; i < 10; i++)
 			{
 				auto transaction (wallet->wallets.tx_begin_write ());
 				wallet->store.rekey (transaction, "1234");
 			}
 		});
-		system.nodes[0]->background ([&wallet]() {
+		threads.emplace_back ([&wallet]() {
 			for (int i = 0; i < 10; i++)
 			{
 				auto transaction (wallet->wallets.tx_begin_read ());
 				wallet->store.attempt_password (transaction, "1234");
 			}
 		});
+	}
+	for (auto & thread : threads)
+	{
+		thread.join ();
 	}
 	system.stop ();
 	runner.join ();
@@ -991,9 +1031,8 @@ TEST (wallet, change_seed)
 	seed1.data = 1;
 	badem::public_key pub;
 	uint32_t index (4);
-	badem::raw_key prv;
-	badem::deterministic_key (seed1.data, index, prv.data);
-	pub = badem::pub_key (prv.data);
+	auto prv = badem::deterministic_key (seed1, index);
+	pub = badem::pub_key (prv);
 	wallet->insert_adhoc (badem::test_genesis_key.prv, false);
 	auto block (wallet->send_action (badem::test_genesis_key.pub, pub, 100));
 	ASSERT_NE (nullptr, block);
@@ -1025,9 +1064,8 @@ TEST (wallet, deterministic_restore)
 		wallet->store.seed (seed2, transaction);
 		ASSERT_EQ (seed1, seed2);
 		ASSERT_EQ (1, wallet->store.deterministic_index_get (transaction));
-		badem::raw_key prv;
-		badem::deterministic_key (seed1.data, index, prv.data);
-		pub = badem::pub_key (prv.data);
+		auto prv = badem::deterministic_key (seed1, index);
+		pub = badem::pub_key (prv);
 	}
 	wallet->insert_adhoc (badem::test_genesis_key.prv, false);
 	auto block (wallet->send_action (badem::test_genesis_key.pub, pub, 100));
@@ -1041,38 +1079,171 @@ TEST (wallet, deterministic_restore)
 	ASSERT_TRUE (wallet->exists (pub));
 }
 
-TEST (wallet, update_work_action)
+TEST (wallet, work_watcher_update)
 {
 	badem::system system;
 	badem::node_config node_config (24000, system.logging);
 	node_config.enable_voting = false;
+	node_config.work_watcher_period = 1s;
 	auto & node = *system.add_node (node_config);
 	auto & wallet (*system.wallet (0));
 	wallet.insert_adhoc (badem::test_genesis_key.prv);
 	badem::keypair key;
-	auto const block (wallet.send_action (badem::test_genesis_key.pub, key.pub, badem::genesis_amount));
+	auto const block1 (wallet.send_action (badem::test_genesis_key.pub, key.pub, 100));
 	uint64_t difficulty1 (0);
-	badem::work_validate (*block, &difficulty1);
-	auto multiplier1 = badem::difficulty::to_multiplier (difficulty1, node.network_params.network.publish_threshold);
-	system.deadline_set (10s);
-	auto updated (false);
-	uint64_t updated_difficulty;
-	while (!updated)
+	badem::work_validate (*block1, &difficulty1);
+	auto const block2 (wallet.send_action (badem::test_genesis_key.pub, key.pub, 200));
+	uint64_t difficulty2 (0);
+	badem::work_validate (*block2, &difficulty2);
+	auto multiplier = badem::difficulty::to_multiplier (std::max (difficulty1, difficulty2), node.network_params.network.publish_threshold);
+	uint64_t updated_difficulty1{ difficulty1 }, updated_difficulty2{ difficulty2 };
 	{
-		std::unique_lock<std::mutex> lock (node.active.mutex);
+		badem::unique_lock<std::mutex> lock (node.active.mutex);
+		// Prevent active difficulty repopulating multipliers
+		node.network_params.network.request_interval_ms = 10000;
 		//fill multipliers_cb and update active difficulty;
 		for (auto i (0); i < node.active.multipliers_cb.size (); i++)
 		{
-			node.active.multipliers_cb.push_back (multiplier1 * (1 + i / 100.));
+			node.active.multipliers_cb.push_back (multiplier * (1.5 + i / 100.));
 		}
 		node.active.update_active_difficulty (lock);
+	}
+	system.deadline_set (20s);
+	while (updated_difficulty1 == difficulty1 || updated_difficulty2 == difficulty2)
+	{
+		{
+			badem::lock_guard<std::mutex> guard (node.active.mutex);
+			{
+				auto const existing (node.active.roots.find (block1->qualified_root ()));
+				//if existing is junk the block has been confirmed already
+				ASSERT_NE (existing, node.active.roots.end ());
+				updated_difficulty1 = existing->difficulty;
+			}
+			{
+				auto const existing (node.active.roots.find (block2->qualified_root ()));
+				//if existing is junk the block has been confirmed already
+				ASSERT_NE (existing, node.active.roots.end ());
+				updated_difficulty2 = existing->difficulty;
+			}
+		}
+		ASSERT_NO_ERROR (system.poll ());
+	}
+	ASSERT_GT (updated_difficulty1, difficulty1);
+	ASSERT_GT (updated_difficulty2, difficulty2);
+}
+
+TEST (wallet, work_watcher_generation_disabled)
+{
+	badem::system system;
+	badem::node_config node_config (24000, system.logging);
+	node_config.enable_voting = false;
+	node_config.work_watcher_period = 1s;
+	node_config.work_threads = 0;
+	auto & node = *system.add_node (node_config);
+	badem::work_pool pool (std::numeric_limits<unsigned>::max ());
+	badem::genesis genesis;
+	badem::keypair key;
+	auto block (std::make_shared<badem::state_block> (badem::test_genesis_key.pub, genesis.hash (), badem::test_genesis_key.pub, badem::genesis_amount - badem::Mbdm_ratio, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (genesis.hash ())));
+	uint64_t difficulty (0);
+	ASSERT_FALSE (badem::work_validate (*block, &difficulty));
+	node.wallets.watcher->add (block);
+	ASSERT_FALSE (node.process_local (block).code != badem::process_result::progress);
+	ASSERT_TRUE (node.wallets.watcher->is_watched (block->qualified_root ()));
+	auto multiplier = badem::difficulty::to_multiplier (difficulty, node.network_params.network.publish_threshold);
+	uint64_t updated_difficulty{ difficulty };
+	{
+		badem::unique_lock<std::mutex> lock (node.active.mutex);
+		// Prevent active difficulty repopulating multipliers
+		node.network_params.network.request_interval_ms = 10000;
+		//fill multipliers_cb and update active difficulty;
+		for (auto i (0); i < node.active.multipliers_cb.size (); i++)
+		{
+			node.active.multipliers_cb.push_back (multiplier * (1.5 + i / 100.));
+		}
+		node.active.update_active_difficulty (lock);
+	}
+	std::this_thread::sleep_for (5s);
+
+	badem::lock_guard<std::mutex> guard (node.active.mutex);
+	{
 		auto const existing (node.active.roots.find (block->qualified_root ()));
 		//if existing is junk the block has been confirmed already
 		ASSERT_NE (existing, node.active.roots.end ());
-		updated = existing->difficulty != difficulty1;
 		updated_difficulty = existing->difficulty;
-		lock.unlock ();
+	}
+	ASSERT_EQ (updated_difficulty, difficulty);
+	ASSERT_TRUE (node.distributed_work.items.empty ());
+}
+
+TEST (wallet, work_watcher_removed)
+{
+	badem::system system;
+	badem::node_config node_config (24000, system.logging);
+	node_config.work_watcher_period = 1s;
+	auto & node = *system.add_node (node_config);
+	(void)node;
+	auto & wallet (*system.wallet (0));
+	wallet.insert_adhoc (badem::test_genesis_key.prv);
+	badem::keypair key;
+	ASSERT_EQ (0, wallet.wallets.watcher->size ());
+	auto const block (wallet.send_action (badem::test_genesis_key.pub, key.pub, 100));
+	ASSERT_EQ (1, wallet.wallets.watcher->size ());
+	auto transaction (wallet.wallets.tx_begin_write ());
+	system.deadline_set (3s);
+	while (0 == wallet.wallets.watcher->size ())
+	{
 		ASSERT_NO_ERROR (system.poll ());
 	}
-	ASSERT_GT (updated_difficulty, difficulty1);
+}
+
+TEST (wallet, work_watcher_cancel)
+{
+	badem::system system;
+	badem::node_config node_config (24000, system.logging);
+	node_config.work_watcher_period = 1s;
+	node_config.max_work_generate_multiplier = 1e6;
+	node_config.max_work_generate_difficulty = badem::difficulty::from_multiplier (node_config.max_work_generate_multiplier, badem::network_constants::publish_test_threshold);
+	node_config.enable_voting = false;
+	auto & node = *system.add_node (node_config);
+	auto & wallet (*system.wallet (0));
+	wallet.insert_adhoc (badem::test_genesis_key.prv, false);
+	badem::keypair key;
+	auto work1 (node.work_generate_blocking (badem::test_genesis_key.pub));
+	auto const block1 (wallet.send_action (badem::test_genesis_key.pub, key.pub, 100, *work1, false));
+	uint64_t difficulty1 (0);
+	badem::work_validate (*block1, &difficulty1);
+	{
+		badem::unique_lock<std::mutex> lock (node.active.mutex);
+		// Prevent active difficulty repopulating multipliers
+		node.network_params.network.request_interval_ms = 10000;
+		// Fill multipliers_cb and update active difficulty;
+		for (auto i (0); i < node.active.multipliers_cb.size (); i++)
+		{
+			node.active.multipliers_cb.push_back (node.config.max_work_generate_multiplier);
+		}
+		node.active.update_active_difficulty (lock);
+	}
+	// Wait for work generation to start
+	system.deadline_set (5s);
+	while (0 == node.work.size ())
+	{
+		ASSERT_NO_ERROR (system.poll ());
+	}
+	// Cancel the ongoing work
+	ASSERT_EQ (1, node.work.size ());
+	node.work.cancel (block1->root ());
+	ASSERT_EQ (0, node.work.size ());
+	{
+		badem::unique_lock<std::mutex> lock (wallet.wallets.watcher->mutex);
+		auto existing (wallet.wallets.watcher->watched.find (block1->qualified_root ()));
+		ASSERT_NE (wallet.wallets.watcher->watched.end (), existing);
+		auto block2 (existing->second);
+		// Block must be the same
+		ASSERT_NE (nullptr, block1);
+		ASSERT_NE (nullptr, block2);
+		ASSERT_EQ (*block1, *block2);
+		// but should still be under watch
+		lock.unlock ();
+		ASSERT_TRUE (wallet.wallets.watcher->is_watched (block1->qualified_root ()));
+	}
 }

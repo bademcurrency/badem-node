@@ -2,8 +2,10 @@
 
 #include <badem/crypto_lib/random_pool.hpp>
 #include <badem/lib/config.hpp>
+#include <badem/lib/diagnosticsconfig.hpp>
 #include <badem/lib/logger_mt.hpp>
 #include <badem/lib/memory.hpp>
+#include <badem/lib/rocksdbconfig.hpp>
 #include <badem/secure/common.hpp>
 #include <badem/secure/versioning.hpp>
 
@@ -15,20 +17,19 @@
 namespace badem
 {
 /**
- * Encapsulates database specific container and provides uint256_union conversion of the data.
+ * Encapsulates database specific container
  */
 template <typename Val>
 class db_val
 {
 public:
-	db_val (Val const & value_a, badem::epoch epoch_a = badem::epoch::unspecified) :
-	value (value_a),
-	epoch (epoch_a)
+	db_val (Val const & value_a) :
+	value (value_a)
 	{
 	}
 
-	db_val (badem::epoch epoch_a = badem::epoch::unspecified) :
-	db_val (0, nullptr, epoch_a)
+	db_val () :
+	db_val (0, nullptr)
 	{
 	}
 
@@ -58,9 +59,15 @@ public:
 	}
 
 	db_val (badem::pending_info const & val_a) :
-	db_val (sizeof (val_a.source) + sizeof (val_a.amount), const_cast<badem::pending_info *> (&val_a))
+	db_val (val_a.db_size (), const_cast<badem::pending_info *> (&val_a))
 	{
 		static_assert (std::is_standard_layout<badem::pending_info>::value, "Standard layout is required");
+	}
+
+	db_val (badem::pending_info_v14 const & val_a) :
+	db_val (val_a.db_size (), const_cast<badem::pending_info_v14 *> (&val_a))
+	{
+		static_assert (std::is_standard_layout<badem::pending_info_v14>::value, "Standard layout is required");
 	}
 
 	db_val (badem::pending_key const & val_a) :
@@ -77,6 +84,12 @@ public:
 			val_a.serialize (stream);
 		}
 		convert_buffer_to_value ();
+	}
+
+	db_val (badem::unchecked_key const & val_a) :
+	db_val (sizeof (val_a), const_cast<badem::unchecked_key *> (&val_a))
+	{
+		static_assert (std::is_standard_layout<badem::unchecked_key>::value, "Standard layout is required");
 	}
 
 	db_val (badem::block_info const & val_a) :
@@ -115,7 +128,6 @@ public:
 	explicit operator badem::account_info () const
 	{
 		badem::account_info result;
-		result.epoch = epoch;
 		assert (size () == result.db_size ());
 		std::copy (reinterpret_cast<uint8_t const *> (data ()), reinterpret_cast<uint8_t const *> (data ()) + result.db_size (), reinterpret_cast<uint8_t *> (&result));
 		return result;
@@ -124,7 +136,6 @@ public:
 	explicit operator badem::account_info_v13 () const
 	{
 		badem::account_info_v13 result;
-		result.epoch = epoch;
 		assert (size () == result.db_size ());
 		std::copy (reinterpret_cast<uint8_t const *> (data ()), reinterpret_cast<uint8_t const *> (data ()) + result.db_size (), reinterpret_cast<uint8_t *> (&result));
 		return result;
@@ -133,7 +144,6 @@ public:
 	explicit operator badem::account_info_v14 () const
 	{
 		badem::account_info_v14 result;
-		result.epoch = epoch;
 		assert (size () == result.db_size ());
 		std::copy (reinterpret_cast<uint8_t const *> (data ()), reinterpret_cast<uint8_t const *> (data ()) + result.db_size (), reinterpret_cast<uint8_t *> (&result));
 		return result;
@@ -148,11 +158,19 @@ public:
 		return result;
 	}
 
+	explicit operator badem::pending_info_v14 () const
+	{
+		badem::pending_info_v14 result;
+		assert (size () == result.db_size ());
+		std::copy (reinterpret_cast<uint8_t const *> (data ()), reinterpret_cast<uint8_t const *> (data ()) + result.db_size (), reinterpret_cast<uint8_t *> (&result));
+		return result;
+	}
+
 	explicit operator badem::pending_info () const
 	{
 		badem::pending_info result;
-		result.epoch = epoch;
-		std::copy (reinterpret_cast<uint8_t const *> (data ()), reinterpret_cast<uint8_t const *> (data ()) + sizeof (badem::pending_info::source) + sizeof (badem::pending_info::amount), reinterpret_cast<uint8_t *> (&result));
+		assert (size () == result.db_size ());
+		std::copy (reinterpret_cast<uint8_t const *> (data ()), reinterpret_cast<uint8_t const *> (data ()) + result.db_size (), reinterpret_cast<uint8_t *> (&result));
 		return result;
 	}
 
@@ -175,20 +193,38 @@ public:
 		return result;
 	}
 
+	explicit operator badem::unchecked_key () const
+	{
+		badem::unchecked_key result;
+		assert (size () == sizeof (result));
+		static_assert (sizeof (badem::unchecked_key::previous) + sizeof (badem::pending_key::hash) == sizeof (result), "Packed class");
+		std::copy (reinterpret_cast<uint8_t const *> (data ()), reinterpret_cast<uint8_t const *> (data ()) + sizeof (result), reinterpret_cast<uint8_t *> (&result));
+		return result;
+	}
+
 	explicit operator badem::uint128_union () const
 	{
-		badem::uint128_union result;
-		assert (size () == sizeof (result));
-		std::copy (reinterpret_cast<uint8_t const *> (data ()), reinterpret_cast<uint8_t const *> (data ()) + sizeof (result), result.bytes.data ());
-		return result;
+		return convert<badem::uint128_union> ();
+	}
+
+	explicit operator badem::amount () const
+	{
+		return convert<badem::amount> ();
+	}
+
+	explicit operator badem::block_hash () const
+	{
+		return convert<badem::block_hash> ();
+	}
+
+	explicit operator badem::public_key () const
+	{
+		return convert<badem::public_key> ();
 	}
 
 	explicit operator badem::uint256_union () const
 	{
-		badem::uint256_union result;
-		assert (size () == sizeof (result));
-		std::copy (reinterpret_cast<uint8_t const *> (data ()), reinterpret_cast<uint8_t const *> (data ()) + sizeof (result), result.bytes.data ());
-		return result;
+		return convert<badem::uint256_union> ();
 	}
 
 	explicit operator std::array<char, 64> () const
@@ -206,6 +242,21 @@ public:
 		badem::endpoint_key result;
 		std::copy (reinterpret_cast<uint8_t const *> (data ()), reinterpret_cast<uint8_t const *> (data ()) + sizeof (result), reinterpret_cast<uint8_t *> (&result));
 		return result;
+	}
+
+	explicit operator badem::state_block_w_sideband_v14 () const
+	{
+		badem::bufferstream stream (reinterpret_cast<uint8_t const *> (data ()), size ());
+		auto error (false);
+		badem::state_block_w_sideband_v14 state_block_w_sideband_v14;
+		state_block_w_sideband_v14.state_block = std::make_shared<badem::state_block> (error, stream);
+		assert (!error);
+
+		state_block_w_sideband_v14.sideband.type = badem::block_type::state;
+		error = state_block_w_sideband_v14.sideband.deserialize (stream);
+		assert (!error);
+
+		return state_block_w_sideband_v14;
 	}
 
 	explicit operator badem::no_value () const
@@ -289,19 +340,28 @@ public:
 	// Must be specialized
 	void * data () const;
 	size_t size () const;
-	db_val (size_t size_a, void * data_a, badem::epoch epoch_a = badem::epoch::unspecified);
+	db_val (size_t size_a, void * data_a);
 	void convert_buffer_to_value ();
 
 	Val value;
 	std::shared_ptr<std::vector<uint8_t>> buffer;
-	badem::epoch epoch{ badem::epoch::unspecified };
+
+private:
+	template <typename T>
+	T convert () const
+	{
+		T result;
+		assert (size () == sizeof (result));
+		std::copy (reinterpret_cast<uint8_t const *> (data ()), reinterpret_cast<uint8_t const *> (data ()) + sizeof (result), result.bytes.data ());
+		return result;
+	}
 };
 
 class block_sideband final
 {
 public:
 	block_sideband () = default;
-	block_sideband (badem::block_type, badem::account const &, badem::block_hash const &, badem::amount const &, uint64_t, uint64_t);
+	block_sideband (badem::block_type, badem::account const &, badem::block_hash const &, badem::amount const &, uint64_t, uint64_t, badem::epoch);
 	void serialize (badem::stream &) const;
 	bool deserialize (badem::stream &);
 	static size_t size (badem::block_type);
@@ -311,6 +371,7 @@ public:
 	badem::amount balance{ 0 };
 	uint64_t height{ 0 };
 	uint64_t timestamp{ 0 };
+	badem::epoch epoch{ badem::epoch::epoch_0 };
 };
 class transaction;
 class block_store;
@@ -354,7 +415,7 @@ class summation_visitor final : public badem::block_visitor
 	};
 
 public:
-	summation_visitor (badem::transaction const &, badem::block_store const &);
+	summation_visitor (badem::transaction const &, badem::block_store const &, bool is_v14_upgrade = false);
 	virtual ~summation_visitor () = default;
 	/** Computes the balance as of \p block_hash */
 	badem::uint128_t compute_balance (badem::block_hash const & block_hash);
@@ -385,6 +446,10 @@ protected:
 	void open_block (badem::open_block const &) override;
 	void change_block (badem::change_block const &) override;
 	void state_block (badem::state_block const &) override;
+
+private:
+	bool is_v14_upgrade;
+	std::shared_ptr<badem::block> block_get (badem::transaction const &, badem::block_hash const &) const;
 };
 
 /**
@@ -476,6 +541,28 @@ private:
 	std::unique_ptr<badem::store_iterator_impl<T, U>> impl;
 };
 
+// Keep this in alphabetical order
+enum class tables
+{
+	accounts,
+	blocks_info, // LMDB only
+	cached_counts, // RocksDB only
+	change_blocks,
+	confirmation_height,
+	frontiers,
+	meta,
+	online_weight,
+	open_blocks,
+	peers,
+	pending,
+	receive_blocks,
+	representation,
+	send_blocks,
+	state_blocks,
+	unchecked,
+	vote
+};
+
 class transaction_impl
 {
 public:
@@ -495,6 +582,7 @@ class write_transaction_impl : public transaction_impl
 public:
 	virtual void commit () const = 0;
 	virtual void renew () = 0;
+	virtual bool contains (badem::tables table_a) const = 0;
 };
 
 class transaction
@@ -532,10 +620,13 @@ public:
 	void * get_handle () const override;
 	void commit () const;
 	void renew ();
+	bool contains (badem::tables table_a) const;
 
 private:
 	std::unique_ptr<badem::write_transaction_impl> impl;
 };
+
+class rep_weights;
 
 /**
  * Manages block storage and iteration
@@ -543,76 +634,41 @@ private:
 class block_store
 {
 public:
-	enum class tables
-	{
-		frontiers,
-		accounts_v0,
-		accounts_v1,
-		send_blocks,
-		receive_blocks,
-		open_blocks,
-		change_blocks,
-		state_blocks_v0,
-		state_blocks_v1,
-		pending_v0,
-		pending_v1,
-		blocks_info,
-		representation,
-		unchecked,
-		vote,
-		online_weight,
-		meta,
-		peers,
-		confirmation_height
-	};
-
 	virtual ~block_store () = default;
-	virtual void initialize (badem::transaction const &, badem::genesis const &) = 0;
-	virtual void block_put (badem::transaction const &, badem::block_hash const &, badem::block const &, badem::block_sideband const &, badem::epoch version = badem::epoch::epoch_0) = 0;
+	virtual void initialize (badem::write_transaction const &, badem::genesis const &, badem::rep_weights &, std::atomic<uint64_t> &, std::atomic<uint64_t> &) = 0;
+	virtual void block_put (badem::write_transaction const &, badem::block_hash const &, badem::block const &, badem::block_sideband const &) = 0;
 	virtual badem::block_hash block_successor (badem::transaction const &, badem::block_hash const &) const = 0;
-	virtual void block_successor_clear (badem::transaction const &, badem::block_hash const &) = 0;
+	virtual void block_successor_clear (badem::write_transaction const &, badem::block_hash const &) = 0;
 	virtual std::shared_ptr<badem::block> block_get (badem::transaction const &, badem::block_hash const &, badem::block_sideband * = nullptr) const = 0;
+	virtual std::shared_ptr<badem::block> block_get_v14 (badem::transaction const &, badem::block_hash const &, badem::block_sideband_v14 * = nullptr, bool * = nullptr) const = 0;
 	virtual std::shared_ptr<badem::block> block_random (badem::transaction const &) = 0;
-	virtual void block_del (badem::transaction const &, badem::block_hash const &) = 0;
+	virtual void block_del (badem::write_transaction const &, badem::block_hash const &) = 0;
 	virtual bool block_exists (badem::transaction const &, badem::block_hash const &) = 0;
 	virtual bool block_exists (badem::transaction const &, badem::block_type, badem::block_hash const &) = 0;
 	virtual badem::block_counts block_count (badem::transaction const &) = 0;
-	virtual bool root_exists (badem::transaction const &, badem::uint256_union const &) = 0;
+	virtual bool root_exists (badem::transaction const &, badem::root const &) = 0;
 	virtual bool source_exists (badem::transaction const &, badem::block_hash const &) = 0;
 	virtual badem::account block_account (badem::transaction const &, badem::block_hash const &) const = 0;
 
-	virtual void frontier_put (badem::transaction const &, badem::block_hash const &, badem::account const &) = 0;
+	virtual void frontier_put (badem::write_transaction const &, badem::block_hash const &, badem::account const &) = 0;
 	virtual badem::account frontier_get (badem::transaction const &, badem::block_hash const &) const = 0;
-	virtual void frontier_del (badem::transaction const &, badem::block_hash const &) = 0;
+	virtual void frontier_del (badem::write_transaction const &, badem::block_hash const &) = 0;
 
-	virtual void account_put (badem::transaction const &, badem::account const &, badem::account_info const &) = 0;
+	virtual void account_put (badem::write_transaction const &, badem::account const &, badem::account_info const &) = 0;
 	virtual bool account_get (badem::transaction const &, badem::account const &, badem::account_info &) = 0;
-	virtual void account_del (badem::transaction const &, badem::account const &) = 0;
+	virtual void account_del (badem::write_transaction const &, badem::account const &) = 0;
 	virtual bool account_exists (badem::transaction const &, badem::account const &) = 0;
 	virtual size_t account_count (badem::transaction const &) = 0;
-	virtual void confirmation_height_clear (badem::transaction const &, badem::account const & account, uint64_t existing_confirmation_height) = 0;
-	virtual void confirmation_height_clear (badem::transaction const &) = 0;
-	virtual uint64_t cemented_count (badem::transaction const &) = 0;
-	virtual badem::store_iterator<badem::account, badem::account_info> latest_v0_begin (badem::transaction const &, badem::account const &) = 0;
-	virtual badem::store_iterator<badem::account, badem::account_info> latest_v0_begin (badem::transaction const &) = 0;
-	virtual badem::store_iterator<badem::account, badem::account_info> latest_v0_end () = 0;
-	virtual badem::store_iterator<badem::account, badem::account_info> latest_v1_begin (badem::transaction const &, badem::account const &) = 0;
-	virtual badem::store_iterator<badem::account, badem::account_info> latest_v1_begin (badem::transaction const &) = 0;
-	virtual badem::store_iterator<badem::account, badem::account_info> latest_v1_end () = 0;
+	virtual void confirmation_height_clear (badem::write_transaction const &, badem::account const & account, uint64_t existing_confirmation_height) = 0;
+	virtual void confirmation_height_clear (badem::write_transaction const &) = 0;
 	virtual badem::store_iterator<badem::account, badem::account_info> latest_begin (badem::transaction const &, badem::account const &) = 0;
 	virtual badem::store_iterator<badem::account, badem::account_info> latest_begin (badem::transaction const &) = 0;
 	virtual badem::store_iterator<badem::account, badem::account_info> latest_end () = 0;
 
-	virtual void pending_put (badem::transaction const &, badem::pending_key const &, badem::pending_info const &) = 0;
-	virtual void pending_del (badem::transaction const &, badem::pending_key const &) = 0;
+	virtual void pending_put (badem::write_transaction const &, badem::pending_key const &, badem::pending_info const &) = 0;
+	virtual void pending_del (badem::write_transaction const &, badem::pending_key const &) = 0;
 	virtual bool pending_get (badem::transaction const &, badem::pending_key const &, badem::pending_info &) = 0;
 	virtual bool pending_exists (badem::transaction const &, badem::pending_key const &) = 0;
-	virtual badem::store_iterator<badem::pending_key, badem::pending_info> pending_v0_begin (badem::transaction const &, badem::pending_key const &) = 0;
-	virtual badem::store_iterator<badem::pending_key, badem::pending_info> pending_v0_begin (badem::transaction const &) = 0;
-	virtual badem::store_iterator<badem::pending_key, badem::pending_info> pending_v0_end () = 0;
-	virtual badem::store_iterator<badem::pending_key, badem::pending_info> pending_v1_begin (badem::transaction const &, badem::pending_key const &) = 0;
-	virtual badem::store_iterator<badem::pending_key, badem::pending_info> pending_v1_begin (badem::transaction const &) = 0;
-	virtual badem::store_iterator<badem::pending_key, badem::pending_info> pending_v1_end () = 0;
 	virtual badem::store_iterator<badem::pending_key, badem::pending_info> pending_begin (badem::transaction const &, badem::pending_key const &) = 0;
 	virtual badem::store_iterator<badem::pending_key, badem::pending_info> pending_begin (badem::transaction const &) = 0;
 	virtual badem::store_iterator<badem::pending_key, badem::pending_info> pending_end () = 0;
@@ -622,17 +678,11 @@ public:
 	virtual badem::uint128_t block_balance_calculated (std::shared_ptr<badem::block>, badem::block_sideband const &) const = 0;
 	virtual badem::epoch block_version (badem::transaction const &, badem::block_hash const &) = 0;
 
-	virtual badem::uint128_t representation_get (badem::transaction const &, badem::account const &) = 0;
-	virtual void representation_put (badem::transaction const &, badem::account const &, badem::uint128_union const &) = 0;
-	virtual void representation_add (badem::transaction const &, badem::account const &, badem::uint128_t const &) = 0;
-	virtual badem::store_iterator<badem::account, badem::uint128_union> representation_begin (badem::transaction const &) = 0;
-	virtual badem::store_iterator<badem::account, badem::uint128_union> representation_end () = 0;
-
-	virtual void unchecked_clear (badem::transaction const &) = 0;
-	virtual void unchecked_put (badem::transaction const &, badem::unchecked_key const &, badem::unchecked_info const &) = 0;
-	virtual void unchecked_put (badem::transaction const &, badem::block_hash const &, std::shared_ptr<badem::block> const &) = 0;
+	virtual void unchecked_clear (badem::write_transaction const &) = 0;
+	virtual void unchecked_put (badem::write_transaction const &, badem::unchecked_key const &, badem::unchecked_info const &) = 0;
+	virtual void unchecked_put (badem::write_transaction const &, badem::block_hash const &, std::shared_ptr<badem::block> const &) = 0;
 	virtual std::vector<badem::unchecked_info> unchecked_get (badem::transaction const &, badem::block_hash const &) = 0;
-	virtual void unchecked_del (badem::transaction const &, badem::unchecked_key const &) = 0;
+	virtual void unchecked_del (badem::write_transaction const &, badem::unchecked_key const &) = 0;
 	virtual badem::store_iterator<badem::unchecked_key, badem::unchecked_info> unchecked_begin (badem::transaction const &) = 0;
 	virtual badem::store_iterator<badem::unchecked_key, badem::unchecked_info> unchecked_begin (badem::transaction const &, badem::unchecked_key const &) = 0;
 	virtual badem::store_iterator<badem::unchecked_key, badem::unchecked_info> unchecked_end () = 0;
@@ -647,32 +697,32 @@ public:
 	virtual std::shared_ptr<badem::vote> vote_max (badem::transaction const &, std::shared_ptr<badem::vote>) = 0;
 	// Return latest vote for an account considering the vote cache
 	virtual std::shared_ptr<badem::vote> vote_current (badem::transaction const &, badem::account const &) = 0;
-	virtual void flush (badem::transaction const &) = 0;
+	virtual void flush (badem::write_transaction const &) = 0;
 	virtual badem::store_iterator<badem::account, std::shared_ptr<badem::vote>> vote_begin (badem::transaction const &) = 0;
 	virtual badem::store_iterator<badem::account, std::shared_ptr<badem::vote>> vote_end () = 0;
 
-	virtual void online_weight_put (badem::transaction const &, uint64_t, badem::amount const &) = 0;
-	virtual void online_weight_del (badem::transaction const &, uint64_t) = 0;
-	virtual badem::store_iterator<uint64_t, badem::amount> online_weight_begin (badem::transaction const &) = 0;
-	virtual badem::store_iterator<uint64_t, badem::amount> online_weight_end () = 0;
+	virtual void online_weight_put (badem::write_transaction const &, uint64_t, badem::amount const &) = 0;
+	virtual void online_weight_del (badem::write_transaction const &, uint64_t) = 0;
+	virtual badem::store_iterator<uint64_t, badem::amount> online_weight_begin (badem::transaction const &) const = 0;
+	virtual badem::store_iterator<uint64_t, badem::amount> online_weight_end () const = 0;
 	virtual size_t online_weight_count (badem::transaction const &) const = 0;
-	virtual void online_weight_clear (badem::transaction const &) = 0;
+	virtual void online_weight_clear (badem::write_transaction const &) = 0;
 
-	virtual void version_put (badem::transaction const &, int) = 0;
+	virtual void version_put (badem::write_transaction const &, int) = 0;
 	virtual int version_get (badem::transaction const &) const = 0;
 
-	virtual void peer_put (badem::transaction const & transaction_a, badem::endpoint_key const & endpoint_a) = 0;
-	virtual void peer_del (badem::transaction const & transaction_a, badem::endpoint_key const & endpoint_a) = 0;
+	virtual void peer_put (badem::write_transaction const & transaction_a, badem::endpoint_key const & endpoint_a) = 0;
+	virtual void peer_del (badem::write_transaction const & transaction_a, badem::endpoint_key const & endpoint_a) = 0;
 	virtual bool peer_exists (badem::transaction const & transaction_a, badem::endpoint_key const & endpoint_a) const = 0;
 	virtual size_t peer_count (badem::transaction const & transaction_a) const = 0;
-	virtual void peer_clear (badem::transaction const & transaction_a) = 0;
-	virtual badem::store_iterator<badem::endpoint_key, badem::no_value> peers_begin (badem::transaction const & transaction_a) = 0;
-	virtual badem::store_iterator<badem::endpoint_key, badem::no_value> peers_end () = 0;
+	virtual void peer_clear (badem::write_transaction const & transaction_a) = 0;
+	virtual badem::store_iterator<badem::endpoint_key, badem::no_value> peers_begin (badem::transaction const & transaction_a) const = 0;
+	virtual badem::store_iterator<badem::endpoint_key, badem::no_value> peers_end () const = 0;
 
-	virtual void confirmation_height_put (badem::transaction const & transaction_a, badem::account const & account_a, uint64_t confirmation_height_a) = 0;
+	virtual void confirmation_height_put (badem::write_transaction const & transaction_a, badem::account const & account_a, uint64_t confirmation_height_a) = 0;
 	virtual bool confirmation_height_get (badem::transaction const & transaction_a, badem::account const & account_a, uint64_t & confirmation_height_a) = 0;
 	virtual bool confirmation_height_exists (badem::transaction const & transaction_a, badem::account const & account_a) const = 0;
-	virtual void confirmation_height_del (badem::transaction const & transaction_a, badem::account const & account_a) = 0;
+	virtual void confirmation_height_del (badem::write_transaction const & transaction_a, badem::account const & account_a) = 0;
 	virtual uint64_t confirmation_height_count (badem::transaction const & transaction_a) = 0;
 	virtual badem::store_iterator<badem::account, uint64_t> confirmation_height_begin (badem::transaction const & transaction_a, badem::account const & account_a) = 0;
 	virtual badem::store_iterator<badem::account, uint64_t> confirmation_height_begin (badem::transaction const & transaction_a) = 0;
@@ -681,14 +731,31 @@ public:
 	virtual uint64_t block_account_height (badem::transaction const & transaction_a, badem::block_hash const & hash_a) const = 0;
 	virtual std::mutex & get_cache_mutex () = 0;
 
+	virtual bool copy_db (boost::filesystem::path const & destination) = 0;
+
+	/** Not applicable to all sub-classes */
 	virtual void serialize_mdb_tracker (boost::property_tree::ptree &, std::chrono::milliseconds, std::chrono::milliseconds) = 0;
 
+	virtual bool init_error () const = 0;
+
 	/** Start read-write transaction */
-	virtual badem::write_transaction tx_begin_write () = 0;
+	virtual badem::write_transaction tx_begin_write (std::vector<badem::tables> const & tables_to_lock = {}, std::vector<badem::tables> const & tables_no_lock = {}) = 0;
 
 	/** Start read-only transaction */
 	virtual badem::read_transaction tx_begin_read () = 0;
 };
 
-std::unique_ptr<badem::block_store> make_store (bool & init, badem::logger_mt & logger, boost::filesystem::path const & path);
+std::unique_ptr<badem::block_store> make_store (badem::logger_mt & logger, boost::filesystem::path const & path, bool open_read_only = false, bool add_db_postfix = false, badem::rocksdb_config const & rocksdb_config = badem::rocksdb_config{}, badem::txn_tracking_config const & txn_tracking_config_a = badem::txn_tracking_config{}, std::chrono::milliseconds block_processor_batch_max_time_a = std::chrono::milliseconds (5000), int lmdb_max_dbs = 128, size_t batch_size = 512, bool backup_before_upgrade = false, bool rocksdb_backend = false);
+}
+
+namespace std
+{
+template <>
+struct hash<::badem::tables>
+{
+	size_t operator() (::badem::tables const & table_a) const
+	{
+		return static_cast<size_t> (table_a);
+	}
+};
 }

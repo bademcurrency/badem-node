@@ -5,6 +5,10 @@
 #include <badem/node/node.hpp>
 #include <badem/rpc/rpc.hpp>
 
+#if BADEM_ROCKSDB
+#include <badem/node/rocksdb/rocksdb.hpp>
+#endif
+
 #include <boost/polymorphic_cast.hpp>
 #include <boost/property_tree/json_parser.hpp>
 
@@ -60,18 +64,13 @@ void badem::node::keepalive (std::string const & address_a, uint16_t port_a)
 	});
 }
 
-bool badem::node_init::error () const
-{
-	return block_store_init || wallets_store_init;
-}
-
 namespace badem
 {
 std::unique_ptr<seq_con_info_component> collect_seq_con_info (rep_crawler & rep_crawler, const std::string & name)
 {
 	size_t count = 0;
 	{
-		std::lock_guard<std::mutex> guard (rep_crawler.active_mutex);
+		badem::lock_guard<std::mutex> guard (rep_crawler.active_mutex);
 		count = rep_crawler.active.size ();
 	}
 
@@ -85,15 +84,15 @@ std::unique_ptr<seq_con_info_component> collect_seq_con_info (block_processor & 
 {
 	size_t state_blocks_count = 0;
 	size_t blocks_count = 0;
-	size_t blocks_hashes_count = 0;
+	size_t blocks_filter_count = 0;
 	size_t forced_count = 0;
 	size_t rolled_back_count = 0;
 
 	{
-		std::lock_guard<std::mutex> guard (block_processor.mutex);
+		badem::lock_guard<std::mutex> guard (block_processor.mutex);
 		state_blocks_count = block_processor.state_blocks.size ();
 		blocks_count = block_processor.blocks.size ();
-		blocks_hashes_count = block_processor.blocks_hashes.size ();
+		blocks_filter_count = block_processor.blocks_filter.size ();
 		forced_count = block_processor.forced.size ();
 		rolled_back_count = block_processor.rolled_back.size ();
 	}
@@ -101,7 +100,7 @@ std::unique_ptr<seq_con_info_component> collect_seq_con_info (block_processor & 
 	auto composite = std::make_unique<seq_con_info_composite> (name);
 	composite->add_component (std::make_unique<seq_con_info_leaf> (seq_con_info{ "state_blocks", state_blocks_count, sizeof (decltype (block_processor.state_blocks)::value_type) }));
 	composite->add_component (std::make_unique<seq_con_info_leaf> (seq_con_info{ "blocks", blocks_count, sizeof (decltype (block_processor.blocks)::value_type) }));
-	composite->add_component (std::make_unique<seq_con_info_leaf> (seq_con_info{ "blocks_hashes", blocks_hashes_count, sizeof (decltype (block_processor.blocks_hashes)::value_type) }));
+	composite->add_component (std::make_unique<seq_con_info_leaf> (seq_con_info{ "blocks_filter", blocks_filter_count, sizeof (decltype (block_processor.blocks_filter)::value_type) }));
 	composite->add_component (std::make_unique<seq_con_info_leaf> (seq_con_info{ "forced", forced_count, sizeof (decltype (block_processor.forced)::value_type) }));
 	composite->add_component (std::make_unique<seq_con_info_leaf> (seq_con_info{ "rolled_back", rolled_back_count, sizeof (decltype (block_processor.rolled_back)::value_type) }));
 	composite->add_component (collect_seq_con_info (block_processor.generator, "generator"));
@@ -109,12 +108,12 @@ std::unique_ptr<seq_con_info_component> collect_seq_con_info (block_processor & 
 }
 }
 
-badem::node::node (badem::node_init & init_a, boost::asio::io_context & io_ctx_a, uint16_t peering_port_a, boost::filesystem::path const & application_path_a, badem::alarm & alarm_a, badem::logging const & logging_a, badem::work_pool & work_a, badem::node_flags flags_a) :
-node (init_a, io_ctx_a, application_path_a, alarm_a, badem::node_config (peering_port_a, logging_a), work_a, flags_a)
+badem::node::node (boost::asio::io_context & io_ctx_a, uint16_t peering_port_a, boost::filesystem::path const & application_path_a, badem::alarm & alarm_a, badem::logging const & logging_a, badem::work_pool & work_a, badem::node_flags flags_a) :
+node (io_ctx_a, application_path_a, alarm_a, badem::node_config (peering_port_a, logging_a), work_a, flags_a)
 {
 }
 
-badem::node::node (badem::node_init & init_a, boost::asio::io_context & io_ctx_a, boost::filesystem::path const & application_path_a, badem::alarm & alarm_a, badem::node_config const & config_a, badem::work_pool & work_a, badem::node_flags flags_a) :
+badem::node::node (boost::asio::io_context & io_ctx_a, boost::filesystem::path const & application_path_a, badem::alarm & alarm_a, badem::node_config const & config_a, badem::work_pool & work_a, badem::node_flags flags_a) :
 io_ctx (io_ctx_a),
 node_initialized_latch (1),
 config (config_a),
@@ -122,13 +121,14 @@ stats (config.stat_config),
 flags (flags_a),
 alarm (alarm_a),
 work (work_a),
+distributed_work (*this),
 logger (config_a.logging.min_time_between_log_output),
-store_impl (std::make_unique<badem::mdb_store> (init_a.block_store_init, logger, application_path_a / "data.ldb", config_a.diagnostics_config.txn_tracking, config_a.block_processor_batch_max_time, config_a.lmdb_max_dbs, !flags.disable_unchecked_drop, flags.sideband_batch_size)),
+store_impl (badem::make_store (logger, application_path_a, flags.read_only, true, config_a.rocksdb_config, config_a.diagnostics_config.txn_tracking, config_a.block_processor_batch_max_time, config_a.lmdb_max_dbs, flags.sideband_batch_size, config_a.backup_before_upgrade, config_a.rocksdb_config.enable)),
 store (*store_impl),
-wallets_store_impl (std::make_unique<badem::mdb_wallets_store> (init_a.wallets_store_init, application_path_a / "wallets.ldb", config_a.lmdb_max_dbs)),
+wallets_store_impl (std::make_unique<badem::mdb_wallets_store> (application_path_a / "wallets.ldb", config_a.lmdb_max_dbs)),
 wallets_store (*wallets_store_impl),
 gap_cache (*this),
-ledger (store, stats, config.epoch_block_link, config.epoch_block_signer),
+ledger (store, stats, flags_a.cache_representative_weights_from_frontiers),
 checker (config.signature_checker_threads),
 network (*this, config.peering_port),
 bootstrap_initiator (*this),
@@ -146,12 +146,12 @@ block_processor_thread ([this]() {
 online_reps (*this, config.online_weight_minimum.number ()),
 vote_uniquer (block_uniquer),
 active (*this),
-confirmation_height_processor (pending_confirmation_height, store, ledger.stats, active, ledger.epoch_link, write_database_queue, config.conf_height_processor_batch_min_time, logger),
+confirmation_height_processor (pending_confirmation_height, ledger, active, write_database_queue, config.conf_height_processor_batch_min_time, logger),
 payment_observer_processor (observers.blocks),
-wallets (init_a.wallets_store_init, *this),
+wallets (wallets_store.init_error (), *this),
 startup_time (std::chrono::steady_clock::now ())
 {
-	if (!init_a.error ())
+	if (!init_error ())
 	{
 		if (config.websocket_config.enabled)
 		{
@@ -196,7 +196,7 @@ startup_time (std::chrono::steady_clock::now ())
 							{
 								event.add ("subtype", "change");
 							}
-							else if (amount_a == 0 && !node_l->ledger.epoch_link.is_zero () && node_l->ledger.is_epoch_link (block_a->link ()))
+							else if (amount_a == 0 && node_l->ledger.is_epoch_link (block_a->link ()))
 							{
 								event.add ("subtype", "epoch");
 							}
@@ -250,7 +250,7 @@ startup_time (std::chrono::steady_clock::now ())
 						{
 							subtype = "change";
 						}
-						else if (amount_a == 0 && !this->ledger.epoch_link.is_zero () && this->ledger.is_epoch_link (block_a->link ()))
+						else if (amount_a == 0 && this->ledger.is_epoch_link (block_a->link ()))
 						{
 							subtype = "epoch";
 						}
@@ -309,12 +309,12 @@ startup_time (std::chrono::steady_clock::now ())
 				this->network.send_keepalive_self (channel_a);
 			}
 		});
-		observers.vote.add ([this](badem::transaction const & transaction, std::shared_ptr<badem::vote> vote_a, std::shared_ptr<badem::transport::channel> channel_a) {
+		observers.vote.add ([this](std::shared_ptr<badem::vote> vote_a, std::shared_ptr<badem::transport::channel> channel_a) {
 			this->gap_cache.vote (vote_a);
 			this->online_reps.observe (vote_a->account);
 			badem::uint128_t rep_weight;
 			{
-				rep_weight = ledger.weight (transaction, vote_a->account);
+				rep_weight = ledger.weight (vote_a->account);
 			}
 			if (rep_weight > minimum_principal_weight ())
 			{
@@ -347,9 +347,9 @@ startup_time (std::chrono::steady_clock::now ())
 				}
 			}
 		});
-		if (this->websocket_server)
+		if (websocket_server)
 		{
-			observers.vote.add ([this](badem::transaction const & transaction, std::shared_ptr<badem::vote> vote_a, std::shared_ptr<badem::transport::channel> channel_a) {
+			observers.vote.add ([this](std::shared_ptr<badem::vote> vote_a, std::shared_ptr<badem::transport::channel> channel_a) {
 				if (this->websocket_server->any_subscriber (badem::websocket::topic::vote))
 				{
 					badem::websocket::message_builder builder;
@@ -358,6 +358,11 @@ startup_time (std::chrono::steady_clock::now ())
 				}
 			});
 		}
+		// Cancelling local work generation
+		observers.work_cancel.add ([this](badem::root const & root_a) {
+			this->work.cancel (root_a);
+			this->distributed_work.cancel (root_a);
+		});
 
 		logger.always_log ("Node starting, version: ", BADEM_VERSION_STRING);
 		logger.always_log ("Build information: ", BUILD_INFO);
@@ -365,7 +370,12 @@ startup_time (std::chrono::steady_clock::now ())
 		auto network_label = network_params.network.get_current_network_as_string ();
 		logger.always_log ("Active network: ", network_label);
 
-		logger.always_log (boost::str (boost::format ("Work pool running %1% threads") % work.threads.size ()));
+		logger.always_log (boost::str (boost::format ("Work pool running %1% threads %2%") % work.threads.size () % (work.opencl ? "(1 for OpenCL)" : "")));
+		logger.always_log (boost::str (boost::format ("%1% work peers configured") % config.work_peers.size ()));
+		if (!work_generation_enabled ())
+		{
+			logger.always_log ("Work generation is disabled");
+		}
 
 		if (config.logging.node_lifetime_tracing ())
 		{
@@ -384,32 +394,43 @@ startup_time (std::chrono::steady_clock::now ())
 		badem::genesis genesis;
 		if (!is_initialized)
 		{
+			release_assert (!flags.read_only);
 			auto transaction (store.tx_begin_write ());
 			// Store was empty meaning we just created it, add the genesis block
-			store.initialize (transaction, genesis);
+			store.initialize (transaction, genesis, ledger.rep_weights, ledger.cemented_count, ledger.block_count_cache);
 		}
 
-		auto transaction (store.tx_begin_read ());
-		if (!store.block_exists (transaction, genesis.hash ()))
+		if (!ledger.block_exists (genesis.hash ()))
 		{
-			logger.always_log ("Genesis block not found. Make sure the node network ID is correct.");
+			std::stringstream ss;
+			ss << "Genesis block not found. Make sure the node network ID is correct.";
+			if (network_params.network.is_beta_network ())
+			{
+				ss << " Beta network may have reset, try clearing database files";
+			}
+			auto str = ss.str ();
+
+			logger.always_log (str);
+			std::cerr << str << std::endl;
 			std::exit (1);
 		}
 
 		node_id = badem::keypair ();
 		logger.always_log ("Node ID: ", node_id.pub.to_node_id ());
 
-		const uint8_t * weight_buffer = network_params.network.is_live_network () ? badem_bootstrap_weights_live : badem_bootstrap_weights_beta;
-		size_t weight_size = network_params.network.is_live_network () ? badem_bootstrap_weights_live_size : badem_bootstrap_weights_beta_size;
-		if (network_params.network.is_live_network () || network_params.network.is_beta_network ())
+		if ((network_params.network.is_live_network () || network_params.network.is_beta_network ()) && !flags.inactive_node)
 		{
+			// Use bootstrap weights if initial bootstrap is not completed
+			bool use_bootstrap_weight (false);
+			const uint8_t * weight_buffer = network_params.network.is_live_network () ? badem_bootstrap_weights_live : badem_bootstrap_weights_beta;
+			size_t weight_size = network_params.network.is_live_network () ? badem_bootstrap_weights_live_size : badem_bootstrap_weights_beta_size;
 			badem::bufferstream weight_stream ((const uint8_t *)weight_buffer, weight_size);
 			badem::uint128_union block_height;
 			if (!badem::try_read (weight_stream, block_height))
 			{
 				auto max_blocks = (uint64_t)block_height.number ();
-				auto transaction (store.tx_begin_read ());
-				if (ledger.store.block_count (transaction).sum () < max_blocks)
+				use_bootstrap_weight = ledger.block_count_cache < max_blocks;
+				if (use_bootstrap_weight)
 				{
 					ledger.bootstrap_weight_max_blocks = max_blocks;
 					while (true)
@@ -424,10 +445,17 @@ startup_time (std::chrono::steady_clock::now ())
 						{
 							break;
 						}
-						logger.always_log ("Using bootstrap rep weight: ", account.to_account (), " -> ", weight.format_balance (BDM_ratio, 0, true), " XRB");
+						logger.always_log ("Using bootstrap rep weight: ", account.to_account (), " -> ", weight.format_balance (Mbdm_ratio, 0, true), " XRB");
 						ledger.bootstrap_weights[account] = weight.number ();
 					}
 				}
+			}
+			// Drop unchecked blocks if initial bootstrap is completed
+			if (!flags.disable_unchecked_drop && !use_bootstrap_weight && !flags.read_only)
+			{
+				auto transaction (store.tx_begin_write ());
+				store.unchecked_clear (transaction);
+				logger.always_log ("Dropping unchecked blocks");
 			}
 		}
 	}
@@ -515,9 +543,9 @@ void badem::node::do_rpc_callback (boost::asio::ip::tcp::resolver::iterator i_a,
 	}
 }
 
-bool badem::node::copy_with_compaction (boost::filesystem::path const & destination_file)
+bool badem::node::copy_with_compaction (boost::filesystem::path const & destination)
 {
-	return !mdb_env_copy2 (boost::polymorphic_downcast<badem::mdb_store *> (store_impl.get ())->env.environment, destination_file.string ().c_str (), MDB_CP_COMPACT);
+	return store.copy_db (destination);
 }
 
 void badem::node::process_fork (badem::transaction const & transaction_a, std::shared_ptr<badem::block> block_a)
@@ -529,7 +557,7 @@ void badem::node::process_fork (badem::transaction const & transaction_a, std::s
 		if (ledger_block && !block_confirmed_or_being_confirmed (transaction_a, ledger_block->hash ()))
 		{
 			std::weak_ptr<badem::node> this_w (shared_from_this ());
-			if (!active.start (ledger_block, [this_w, root](std::shared_ptr<badem::block>) {
+			if (!active.start (ledger_block, false, [this_w, root](std::shared_ptr<badem::block>) {
 				    if (auto this_l = this_w.lock ())
 				    {
 					    auto attempt (this_l->bootstrap_initiator.current_attempt ());
@@ -570,7 +598,6 @@ std::unique_ptr<seq_con_info_component> collect_seq_con_info (node & node, const
 	composite->add_component (collect_seq_con_info (node.bootstrap, "bootstrap"));
 	composite->add_component (node.network.tcp_channels.collect_seq_con_info ("tcp_channels"));
 	composite->add_component (node.network.udp_channels.collect_seq_con_info ("udp_channels"));
-	composite->add_component (node.network.response_channels.collect_seq_con_info ("response_channels"));
 	composite->add_component (node.network.syn_cookies.collect_seq_con_info ("syn_cookies"));
 	composite->add_component (collect_seq_con_info (node.observers, "observers"));
 	composite->add_component (collect_seq_con_info (node.wallets, "wallets"));
@@ -584,6 +611,8 @@ std::unique_ptr<seq_con_info_component> collect_seq_con_info (node & node, const
 	composite->add_component (collect_seq_con_info (node.vote_uniquer, "vote_uniquer"));
 	composite->add_component (collect_seq_con_info (node.confirmation_height_processor, "confirmation_height_processor"));
 	composite->add_component (collect_seq_con_info (node.pending_confirmation_height, "pending_confirmation_height"));
+	composite->add_component (collect_seq_con_info (node.worker, "worker"));
+	composite->add_component (collect_seq_con_info (node.distributed_work, "distributed_work"));
 	return composite;
 }
 }
@@ -596,7 +625,7 @@ void badem::node::process_active (std::shared_ptr<badem::block> incoming)
 
 badem::process_return badem::node::process (badem::block const & block_a)
 {
-	auto transaction (store.tx_begin_write ());
+	auto transaction (store.tx_begin_write ({ tables::accounts, tables::cached_counts, tables::change_blocks, tables::frontiers, tables::open_blocks, tables::pending, tables::receive_blocks, tables::representation, tables::send_blocks, tables::state_blocks }, { tables::confirmation_height }));
 	auto result (ledger.process (transaction, block_a));
 	return result;
 }
@@ -622,12 +651,18 @@ void badem::node::start ()
 	{
 		ongoing_bootstrap ();
 	}
-	else if (!flags.disable_unchecked_cleanup)
+	if (!flags.disable_unchecked_cleanup)
 	{
-		ongoing_unchecked_cleanup ();
+		auto this_l (shared ());
+		worker.push_task ([this_l]() {
+			this_l->ongoing_unchecked_cleanup ();
+		});
 	}
 	ongoing_store_flush ();
-	rep_crawler.start ();
+	if (!flags.disable_rep_crawler)
+	{
+		rep_crawler.start ();
+	}
 	ongoing_rep_calculation ();
 	ongoing_peer_store ();
 	ongoing_online_weight_calculation_queue ();
@@ -648,7 +683,7 @@ void badem::node::start ()
 			this_l->bootstrap_wallet ();
 		});
 	}
-	if (config.external_address != boost::asio::ip::address_v6{} && config.external_port != 0)
+	if (config.external_address == boost::asio::ip::address_v6{}.any ())
 	{
 		port_mapping.start ();
 	}
@@ -659,6 +694,10 @@ void badem::node::stop ()
 	if (!stopped.exchange (true))
 	{
 		logger.always_log ("Node stopping");
+		write_database_queue.stop ();
+		// Cancels ongoing work generation tasks, which may be blocking other threads
+		// No tasks may wait for work generation in I/O threads, or termination signal capturing will be unable to call node::stop()
+		distributed_work.stop ();
 		block_processor.stop ();
 		if (block_processor_thread.joinable ())
 		{
@@ -678,7 +717,8 @@ void badem::node::stop ()
 		checker.stop ();
 		wallets.stop ();
 		stats.stop ();
-		write_database_queue.stop ();
+		worker.stop ();
+		// work pool is not stopped on purpose due to testing setup
 	}
 }
 
@@ -719,18 +759,17 @@ std::pair<badem::uint128_t, badem::uint128_t> badem::node::balance_pending (bade
 
 badem::uint128_t badem::node::weight (badem::account const & account_a)
 {
-	auto transaction (store.tx_begin_read ());
-	return ledger.weight (transaction, account_a);
+	return ledger.weight (account_a);
 }
 
-badem::account badem::node::representative (badem::account const & account_a)
+badem::block_hash badem::node::rep_block (badem::account const & account_a)
 {
 	auto transaction (store.tx_begin_read ());
 	badem::account_info info;
-	badem::account result (0);
+	badem::block_hash result (0);
 	if (!store.account_get (transaction, account_a, info))
 	{
-		result = info.rep_block;
+		result = ledger.representative (transaction, info.head);
 	}
 	return result;
 }
@@ -783,14 +822,16 @@ void badem::node::ongoing_bootstrap ()
 void badem::node::ongoing_store_flush ()
 {
 	{
-		auto transaction (store.tx_begin_write ());
+		auto transaction (store.tx_begin_write ({ tables::vote }));
 		store.flush (transaction);
 	}
 	std::weak_ptr<badem::node> node_w (shared_from_this ());
 	alarm.add (std::chrono::steady_clock::now () + std::chrono::seconds (5), [node_w]() {
 		if (auto node_l = node_w.lock ())
 		{
-			node_l->ongoing_store_flush ();
+			node_l->worker.push_task ([node_l]() {
+				node_l->ongoing_store_flush ();
+			});
 		}
 	});
 }
@@ -803,7 +844,9 @@ void badem::node::ongoing_peer_store ()
 	alarm.add (std::chrono::steady_clock::now () + network_params.node.peer_interval, [node_w]() {
 		if (auto node_l = node_w.lock ())
 		{
-			node_l->ongoing_peer_store ();
+			node_l->worker.push_task ([node_l]() {
+				node_l->ongoing_peer_store ();
+			});
 		}
 	});
 }
@@ -834,7 +877,9 @@ void badem::node::search_pending ()
 	wallets.search_pending_all ();
 	auto this_l (shared ());
 	alarm.add (std::chrono::steady_clock::now () + network_params.node.search_pending_interval, [this_l]() {
-		this_l->search_pending ();
+		this_l->worker.push_task ([this_l]() {
+			this_l->search_pending ();
+		});
 	});
 }
 
@@ -842,12 +887,12 @@ void badem::node::bootstrap_wallet ()
 {
 	std::deque<badem::account> accounts;
 	{
-		std::lock_guard<std::mutex> lock (wallets.mutex);
+		badem::lock_guard<std::mutex> lock (wallets.mutex);
 		auto transaction (wallets.tx_begin_read ());
 		for (auto i (wallets.items.begin ()), n (wallets.items.end ()); i != n && accounts.size () < 128; ++i)
 		{
 			auto & wallet (*i->second);
-			std::lock_guard<std::recursive_mutex> wallet_lock (wallet.store.mutex);
+			badem::lock_guard<std::recursive_mutex> wallet_lock (wallet.store.mutex);
 			for (auto j (wallet.store.begin (transaction)), m (wallet.store.end ()); j != m && accounts.size () < 128; ++j)
 			{
 				badem::account account (j->first);
@@ -861,12 +906,15 @@ void badem::node::bootstrap_wallet ()
 void badem::node::unchecked_cleanup ()
 {
 	std::deque<badem::unchecked_key> cleaning_list;
+	auto attempt (bootstrap_initiator.current_attempt ());
+	bool long_attempt (attempt != nullptr && std::chrono::duration_cast<std::chrono::seconds> (std::chrono::steady_clock::now () - attempt->attempt_start).count () > config.unchecked_cutoff_time.count ());
 	// Collect old unchecked keys
+	if (!flags.disable_unchecked_cleanup && ledger.block_count_cache >= ledger.bootstrap_weight_max_blocks && !long_attempt)
 	{
 		auto now (badem::seconds_since_epoch ());
 		auto transaction (store.tx_begin_read ());
-		// Max 128k records to clean, max 2 minutes reading to prevent slow i/o systems start issues
-		for (auto i (store.unchecked_begin (transaction)), n (store.unchecked_end ()); i != n && cleaning_list.size () < 128 * 1024 && badem::seconds_since_epoch () - now < 120; ++i)
+		// Max 1M records to clean, max 2 minutes reading to prevent slow i/o systems issues
+		for (auto i (store.unchecked_begin (transaction)), n (store.unchecked_end ()); i != n && cleaning_list.size () < 1024 * 1024 && badem::seconds_since_epoch () - now < 120; ++i)
 		{
 			badem::unchecked_key const & key (i->first);
 			badem::unchecked_info const & info (i->second);
@@ -875,6 +923,10 @@ void badem::node::unchecked_cleanup ()
 				cleaning_list.push_back (key);
 			}
 		}
+	}
+	if (!cleaning_list.empty ())
+	{
+		logger.always_log (boost::str (boost::format ("Deleting %1% old unchecked blocks") % cleaning_list.size ()));
 	}
 	// Delete old unchecked keys in batches
 	while (!cleaning_list.empty ())
@@ -892,25 +944,24 @@ void badem::node::unchecked_cleanup ()
 
 void badem::node::ongoing_unchecked_cleanup ()
 {
-	if (!bootstrap_initiator.in_progress ())
-	{
-		unchecked_cleanup ();
-	}
+	unchecked_cleanup ();
 	auto this_l (shared ());
 	alarm.add (std::chrono::steady_clock::now () + network_params.node.unchecked_cleaning_interval, [this_l]() {
-		this_l->ongoing_unchecked_cleanup ();
+		this_l->worker.push_task ([this_l]() {
+			this_l->ongoing_unchecked_cleanup ();
+		});
 	});
 }
 
 int badem::node::price (badem::uint128_t const & balance_a, int amount_a)
 {
-	assert (balance_a >= amount_a * badem::kBDM_ratio);
+	assert (balance_a >= amount_a * badem::Gbdm_ratio);
 	auto balance_l (balance_a);
 	double result (0.0);
 	for (auto i (0); i < amount_a; ++i)
 	{
-		balance_l -= badem::kBDM_ratio;
-		auto balance_scaled ((balance_l / badem::BDM_ratio).convert_to<double> ());
+		balance_l -= badem::Gbdm_ratio;
+		auto balance_scaled ((balance_l / badem::Mbdm_ratio).convert_to<double> ());
 		auto units (balance_scaled / 1000.0);
 		auto unit_price (((free_cutoff - units) / free_cutoff) * price_max);
 		result += std::min (std::max (0.0, unit_price), price_max);
@@ -918,328 +969,66 @@ int badem::node::price (badem::uint128_t const & balance_a, int amount_a)
 	return static_cast<int> (result * 100.0);
 }
 
-namespace
+bool badem::node::local_work_generation_enabled () const
 {
-class work_request
-{
-public:
-	work_request (boost::asio::io_context & io_ctx_a, boost::asio::ip::address address_a, uint16_t port_a) :
-	address (address_a),
-	port (port_a),
-	socket (io_ctx_a)
-	{
-	}
-	boost::asio::ip::address address;
-	uint16_t port;
-	boost::beast::flat_buffer buffer;
-	boost::beast::http::response<boost::beast::http::string_body> response;
-	boost::asio::ip::tcp::socket socket;
-};
-class distributed_work : public std::enable_shared_from_this<distributed_work>
-{
-public:
-	distributed_work (std::shared_ptr<badem::node> const & node_a, badem::block_hash const & root_a, std::function<void(uint64_t)> const & callback_a, uint64_t difficulty_a) :
-	distributed_work (1, node_a, root_a, callback_a, difficulty_a)
-	{
-		assert (node_a != nullptr);
-	}
-	distributed_work (unsigned int backoff_a, std::shared_ptr<badem::node> const & node_a, badem::block_hash const & root_a, std::function<void(uint64_t)> const & callback_a, uint64_t difficulty_a) :
-	callback (callback_a),
-	backoff (backoff_a),
-	node (node_a),
-	root (root_a),
-	need_resolve (node_a->config.work_peers),
-	difficulty (difficulty_a)
-	{
-		assert (node_a != nullptr);
-		completed.clear ();
-	}
-	void start ()
-	{
-		if (need_resolve.empty ())
-		{
-			start_work ();
-		}
-		else
-		{
-			auto current (need_resolve.back ());
-			need_resolve.pop_back ();
-			auto this_l (shared_from_this ());
-			boost::system::error_code ec;
-			auto parsed_address (boost::asio::ip::address_v6::from_string (current.first, ec));
-			if (!ec)
-			{
-				outstanding[parsed_address] = current.second;
-				start ();
-			}
-			else
-			{
-				node->network.resolver.async_resolve (boost::asio::ip::udp::resolver::query (current.first, std::to_string (current.second)), [current, this_l](boost::system::error_code const & ec, boost::asio::ip::udp::resolver::iterator i_a) {
-					if (!ec)
-					{
-						for (auto i (i_a), n (boost::asio::ip::udp::resolver::iterator{}); i != n; ++i)
-						{
-							auto endpoint (i->endpoint ());
-							this_l->outstanding[endpoint.address ()] = endpoint.port ();
-						}
-					}
-					else
-					{
-						this_l->node->logger.try_log (boost::str (boost::format ("Error resolving work peer: %1%:%2%: %3%") % current.first % current.second % ec.message ()));
-					}
-					this_l->start ();
-				});
-			}
-		}
-	}
-	void start_work ()
-	{
-		if (!outstanding.empty ())
-		{
-			auto this_l (shared_from_this ());
-			std::lock_guard<std::mutex> lock (mutex);
-			for (auto const & i : outstanding)
-			{
-				auto host (i.first);
-				auto service (i.second);
-				node->background ([this_l, host, service]() {
-					auto connection (std::make_shared<work_request> (this_l->node->io_ctx, host, service));
-					connection->socket.async_connect (badem::tcp_endpoint (host, service), [this_l, connection](boost::system::error_code const & ec) {
-						if (!ec)
-						{
-							std::string request_string;
-							{
-								boost::property_tree::ptree request;
-								request.put ("action", "work_generate");
-								request.put ("hash", this_l->root.to_string ());
-								request.put ("difficulty", badem::to_string_hex (this_l->difficulty));
-								std::stringstream ostream;
-								boost::property_tree::write_json (ostream, request);
-								request_string = ostream.str ();
-							}
-							auto request (std::make_shared<boost::beast::http::request<boost::beast::http::string_body>> ());
-							request->method (boost::beast::http::verb::post);
-							request->target ("/");
-							request->version (11);
-							request->body () = request_string;
-							request->prepare_payload ();
-							boost::beast::http::async_write (connection->socket, *request, [this_l, connection, request](boost::system::error_code const & ec, size_t bytes_transferred) {
-								if (!ec)
-								{
-									boost::beast::http::async_read (connection->socket, connection->buffer, connection->response, [this_l, connection](boost::system::error_code const & ec, size_t bytes_transferred) {
-										if (!ec)
-										{
-											if (connection->response.result () == boost::beast::http::status::ok)
-											{
-												this_l->success (connection->response.body (), connection->address);
-											}
-											else
-											{
-												this_l->node->logger.try_log (boost::str (boost::format ("Work peer responded with an error %1% %2%: %3%") % connection->address % connection->port % connection->response.result ()));
-												this_l->failure (connection->address);
-											}
-										}
-										else
-										{
-											this_l->node->logger.try_log (boost::str (boost::format ("Unable to read from work_peer %1% %2%: %3% (%4%)") % connection->address % connection->port % ec.message () % ec.value ()));
-											this_l->failure (connection->address);
-										}
-									});
-								}
-								else
-								{
-									this_l->node->logger.try_log (boost::str (boost::format ("Unable to write to work_peer %1% %2%: %3% (%4%)") % connection->address % connection->port % ec.message () % ec.value ()));
-									this_l->failure (connection->address);
-								}
-							});
-						}
-						else
-						{
-							this_l->node->logger.try_log (boost::str (boost::format ("Unable to connect to work_peer %1% %2%: %3% (%4%)") % connection->address % connection->port % ec.message () % ec.value ()));
-							this_l->failure (connection->address);
-						}
-					});
-				});
-			}
-		}
-		else
-		{
-			handle_failure (true);
-		}
-	}
-	void stop ()
-	{
-		auto this_l (shared_from_this ());
-		std::lock_guard<std::mutex> lock (mutex);
-		for (auto const & i : outstanding)
-		{
-			auto host (i.first);
-			node->background ([this_l, host]() {
-				std::string request_string;
-				{
-					boost::property_tree::ptree request;
-					request.put ("action", "work_cancel");
-					request.put ("hash", this_l->root.to_string ());
-					std::stringstream ostream;
-					boost::property_tree::write_json (ostream, request);
-					request_string = ostream.str ();
-				}
-				boost::beast::http::request<boost::beast::http::string_body> request;
-				request.method (boost::beast::http::verb::post);
-				request.target ("/");
-				request.version (11);
-				request.body () = request_string;
-				request.prepare_payload ();
-				auto socket (std::make_shared<boost::asio::ip::tcp::socket> (this_l->node->io_ctx));
-				boost::beast::http::async_write (*socket, request, [socket](boost::system::error_code const & ec, size_t bytes_transferred) {
-				});
-			});
-		}
-		outstanding.clear ();
-	}
-	void success (std::string const & body_a, boost::asio::ip::address const & address)
-	{
-		auto last (remove (address));
-		std::stringstream istream (body_a);
-		try
-		{
-			boost::property_tree::ptree result;
-			boost::property_tree::read_json (istream, result);
-			auto work_text (result.get<std::string> ("work"));
-			uint64_t work;
-			if (!badem::from_string_hex (work_text, work))
-			{
-				uint64_t result_difficulty (0);
-				if (!badem::work_validate (root, work, &result_difficulty) && result_difficulty >= difficulty)
-				{
-					set_once (work);
-					stop ();
-				}
-				else
-				{
-					node->logger.try_log (boost::str (boost::format ("Incorrect work response from %1% for root %2% with diffuculty %3%: %4%") % address % root.to_string () % badem::to_string_hex (difficulty) % work_text));
-					handle_failure (last);
-				}
-			}
-			else
-			{
-				node->logger.try_log (boost::str (boost::format ("Work response from %1% wasn't a number: %2%") % address % work_text));
-				handle_failure (last);
-			}
-		}
-		catch (...)
-		{
-			node->logger.try_log (boost::str (boost::format ("Work response from %1% wasn't parsable: %2%") % address % body_a));
-			handle_failure (last);
-		}
-	}
-	void set_once (uint64_t work_a)
-	{
-		if (!completed.test_and_set ())
-		{
-			callback (work_a);
-		}
-	}
-	void failure (boost::asio::ip::address const & address)
-	{
-		auto last (remove (address));
-		handle_failure (last);
-	}
-	void handle_failure (bool last)
-	{
-		if (last)
-		{
-			if (!completed.test_and_set ())
-			{
-				if (node->config.work_threads != 0 || node->work.opencl)
-				{
-					auto callback_l (callback);
-					// clang-format off
-					node->work.generate (root, [callback_l](boost::optional<uint64_t> const & work_a) {
-						callback_l (work_a.value ());
-					},
-					difficulty);
-					// clang-format on
-				}
-				else
-				{
-					if (backoff == 1 && node->config.logging.work_generation_time ())
-					{
-						node->logger.try_log ("Work peer(s) failed to generate work for root ", root.to_string (), ", retrying...");
-					}
-					auto now (std::chrono::steady_clock::now ());
-					auto root_l (root);
-					auto callback_l (callback);
-					std::weak_ptr<badem::node> node_w (node);
-					auto next_backoff (std::min (backoff * 2, (unsigned int)60 * 5));
-					// clang-format off
-					node->alarm.add (now + std::chrono::seconds (backoff), [ node_w, root_l, callback_l, next_backoff, difficulty = difficulty ] {
-						if (auto node_l = node_w.lock ())
-						{
-							auto work_generation (std::make_shared<distributed_work> (next_backoff, node_l, root_l, callback_l, difficulty));
-							work_generation->start ();
-						}
-					});
-					// clang-format on
-				}
-			}
-		}
-	}
-	bool remove (boost::asio::ip::address const & address)
-	{
-		std::lock_guard<std::mutex> lock (mutex);
-		outstanding.erase (address);
-		return outstanding.empty ();
-	}
-	std::function<void(uint64_t)> callback;
-	unsigned int backoff; // in seconds
-	std::shared_ptr<badem::node> node;
-	badem::block_hash root;
-	std::mutex mutex;
-	std::map<boost::asio::ip::address, uint16_t> outstanding;
-	std::vector<std::pair<std::string, uint16_t>> need_resolve;
-	std::atomic_flag completed;
-	uint64_t difficulty;
-};
+	return config.work_threads > 0 || work.opencl;
 }
 
-void badem::node::work_generate_blocking (badem::block & block_a)
+bool badem::node::work_generation_enabled () const
 {
-	work_generate_blocking (block_a, network_params.network.publish_threshold);
+	return work_generation_enabled (config.work_peers);
 }
 
-void badem::node::work_generate_blocking (badem::block & block_a, uint64_t difficulty_a)
+bool badem::node::work_generation_enabled (std::vector<std::pair<std::string, uint16_t>> const & peers_a) const
 {
-	block_a.block_work_set (work_generate_blocking (block_a.root (), difficulty_a));
+	return !peers_a.empty () || local_work_generation_enabled ();
 }
 
-void badem::node::work_generate (badem::uint256_union const & hash_a, std::function<void(uint64_t)> callback_a)
-{
-	work_generate (hash_a, callback_a, network_params.network.publish_threshold);
-}
-
-void badem::node::work_generate (badem::uint256_union const & hash_a, std::function<void(uint64_t)> callback_a, uint64_t difficulty_a)
-{
-	auto work_generation (std::make_shared<distributed_work> (shared (), hash_a, callback_a, difficulty_a));
-	work_generation->start ();
-}
-
-uint64_t badem::node::work_generate_blocking (badem::uint256_union const & block_a)
+boost::optional<uint64_t> badem::node::work_generate_blocking (badem::block & block_a)
 {
 	return work_generate_blocking (block_a, network_params.network.publish_threshold);
 }
 
-uint64_t badem::node::work_generate_blocking (badem::uint256_union const & hash_a, uint64_t difficulty_a)
+boost::optional<uint64_t> badem::node::work_generate_blocking (badem::block & block_a, uint64_t difficulty_a)
 {
-	std::promise<uint64_t> promise;
-	std::future<uint64_t> future = promise.get_future ();
+	auto opt_work_l (work_generate_blocking (block_a.root (), difficulty_a, block_a.account ()));
+	if (opt_work_l.is_initialized ())
+	{
+		block_a.block_work_set (*opt_work_l);
+	}
+	return opt_work_l;
+}
+
+void badem::node::work_generate (badem::root const & root_a, std::function<void(boost::optional<uint64_t>)> callback_a, boost::optional<badem::account> const & account_a)
+{
+	work_generate (root_a, callback_a, network_params.network.publish_threshold, account_a);
+}
+
+void badem::node::work_generate (badem::root const & root_a, std::function<void(boost::optional<uint64_t>)> callback_a, uint64_t difficulty_a, boost::optional<badem::account> const & account_a, bool secondary_work_peers_a)
+{
+	auto const & peers_l (secondary_work_peers_a ? config.secondary_work_peers : config.work_peers);
+	if (distributed_work.make (root_a, peers_l, callback_a, difficulty_a, account_a))
+	{
+		// Error in creating the job (either stopped or work generation is not possible)
+		callback_a (boost::none);
+	}
+}
+
+boost::optional<uint64_t> badem::node::work_generate_blocking (badem::root const & root_a, boost::optional<badem::account> const & account_a)
+{
+	return work_generate_blocking (root_a, network_params.network.publish_threshold, account_a);
+}
+
+boost::optional<uint64_t> badem::node::work_generate_blocking (badem::root const & root_a, uint64_t difficulty_a, boost::optional<badem::account> const & account_a)
+{
+	std::promise<boost::optional<uint64_t>> promise;
 	// clang-format off
-	work_generate (hash_a, [&promise](uint64_t work_a) {
-		promise.set_value (work_a);
+	work_generate (root_a, [&promise](boost::optional<uint64_t> opt_work_a) {
+		promise.set_value (opt_work_a);
 	},
-	difficulty_a);
+	difficulty_a, account_a);
 	// clang-format on
-	return future.get ();
+	return promise.get_future ().get ();
 }
 
 void badem::node::add_initial_peers ()
@@ -1255,7 +1044,10 @@ void badem::node::add_initial_peers ()
 				if (auto node_l = node_w.lock ())
 				{
 					node_l->network.send_keepalive (channel_a);
-					node_l->rep_crawler.query (channel_a);
+					if (!node_l->flags.disable_rep_crawler)
+					{
+						node_l->rep_crawler.query (channel_a);
+					}
 				}
 			});
 		}
@@ -1264,7 +1056,7 @@ void badem::node::add_initial_peers ()
 
 void badem::node::block_confirm (std::shared_ptr<badem::block> block_a)
 {
-	active.start (block_a);
+	active.start (block_a, false);
 	network.broadcast_confirm_req (block_a);
 	// Calculate votes for local representatives
 	if (config.enable_voting && active.active (*block_a))
@@ -1290,7 +1082,9 @@ void badem::node::ongoing_online_weight_calculation_queue ()
 	alarm.add (std::chrono::steady_clock::now () + (std::chrono::seconds (network_params.node.weight_period)), [node_w]() {
 		if (auto node_l = node_w.lock ())
 		{
-			node_l->ongoing_online_weight_calculation ();
+			node_l->worker.push_task ([node_l]() {
+				node_l->ongoing_online_weight_calculation ();
+			});
 		}
 	});
 }
@@ -1418,47 +1212,33 @@ void badem::node::process_confirmed_data (badem::transaction const & transaction
 
 void badem::node::process_confirmed (badem::election_status const & status_a, uint8_t iteration)
 {
-	auto block_a (status_a.winner);
-	auto hash (block_a->hash ());
-	badem::block_sideband sideband;
-	auto transaction (store.tx_begin_read ());
-	if (store.block_get (transaction, hash, &sideband) != nullptr)
+	if (status_a.type == badem::election_status_type::active_confirmed_quorum)
 	{
-		confirmation_height_processor.add (hash);
-
-		receive_confirmed (transaction, block_a, hash);
-		badem::account account (0);
-		badem::uint128_t amount (0);
-		bool is_state_send (false);
-		badem::account pending_account (0);
-		process_confirmed_data (transaction, block_a, hash, sideband, account, amount, is_state_send, pending_account);
-		observers.blocks.notify (status_a, account, amount, is_state_send);
-		if (amount > 0)
+		auto block_a (status_a.winner);
+		auto hash (block_a->hash ());
+		auto transaction (store.tx_begin_read ());
+		if (store.block_get (transaction, hash) != nullptr)
 		{
-			observers.account_balance.notify (account, false);
-			if (!pending_account.is_zero ())
-			{
-				observers.account_balance.notify (pending_account, true);
-			}
+			confirmation_height_processor.add (hash);
 		}
-	}
-	// Limit to 0.5 * 20 = 10 seconds (more than max block_processor::process_batch finish time)
-	else if (iteration < 20)
-	{
-		iteration++;
-		std::weak_ptr<badem::node> node_w (shared ());
-		alarm.add (std::chrono::steady_clock::now () + network_params.node.process_confirmed_interval, [node_w, status_a, iteration]() {
-			if (auto node_l = node_w.lock ())
-			{
-				node_l->process_confirmed (status_a, iteration);
-			}
-		});
+		// Limit to 0.5 * 20 = 10 seconds (more than max block_processor::process_batch finish time)
+		else if (iteration < 20)
+		{
+			iteration++;
+			std::weak_ptr<badem::node> node_w (shared ());
+			alarm.add (std::chrono::steady_clock::now () + network_params.node.process_confirmed_interval, [node_w, status_a, iteration]() {
+				if (auto node_l = node_w.lock ())
+				{
+					node_l->process_confirmed (status_a, iteration);
+				}
+			});
+		}
 	}
 }
 
 bool badem::block_arrival::add (badem::block_hash const & hash_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	auto now (std::chrono::steady_clock::now ());
 	auto inserted (arrival.insert (badem::block_arrival_info{ now, hash_a }));
 	auto result (!inserted.second);
@@ -1467,7 +1247,7 @@ bool badem::block_arrival::add (badem::block_hash const & hash_a)
 
 bool badem::block_arrival::recent (badem::block_hash const & hash_a)
 {
-	std::lock_guard<std::mutex> lock (mutex);
+	badem::lock_guard<std::mutex> lock (mutex);
 	auto now (std::chrono::steady_clock::now ());
 	while (arrival.size () > arrival_size_min && arrival.begin ()->arrival + arrival_time_min < now)
 	{
@@ -1482,7 +1262,7 @@ std::unique_ptr<seq_con_info_component> collect_seq_con_info (block_arrival & bl
 {
 	size_t count = 0;
 	{
-		std::lock_guard<std::mutex> guard (block_arrival.mutex);
+		badem::lock_guard<std::mutex> guard (block_arrival.mutex);
 		count = block_arrival.arrival.size ();
 	}
 
@@ -1501,7 +1281,7 @@ std::shared_ptr<badem::node> badem::node::shared ()
 bool badem::node::validate_block_by_previous (badem::transaction const & transaction, std::shared_ptr<badem::block> block_a)
 {
 	bool result (false);
-	badem::account account;
+	badem::root account;
 	if (!block_a->previous ().is_zero ())
 	{
 		if (store.block_exists (transaction, block_a->previous ()))
@@ -1534,9 +1314,9 @@ bool badem::node::validate_block_by_previous (badem::transaction const & transac
 		}
 		if (!result)
 		{
-			if (block_l->hashables.balance == prev_balance && !ledger.epoch_link.is_zero () && ledger.is_epoch_link (block_l->hashables.link))
+			if (block_l->hashables.balance == prev_balance && ledger.is_epoch_link (block_l->hashables.link))
 			{
-				account = ledger.epoch_signer;
+				account = ledger.epoch_signer (block_l->link ());
 			}
 		}
 	}
@@ -1553,7 +1333,12 @@ int badem::node::store_version ()
 	return store.version_get (transaction);
 }
 
-badem::inactive_node::inactive_node (boost::filesystem::path const & path_a, uint16_t peering_port_a) :
+bool badem::node::init_error () const
+{
+	return store.init_error () || wallets_store.init_error ();
+}
+
+badem::inactive_node::inactive_node (boost::filesystem::path const & path_a, uint16_t peering_port_a, badem::node_flags const & node_flags) :
 path (path_a),
 io_context (std::make_shared<boost::asio::io_context> ()),
 alarm (*io_context),
@@ -1569,7 +1354,7 @@ peering_port (peering_port_a)
 	badem::set_secure_perm_directory (path, error_chmod);
 	logging.max_size = std::numeric_limits<std::uintmax_t>::max ();
 	logging.init (path);
-	node = std::make_shared<badem::node> (init, *io_context, peering_port, path, alarm, logging, work);
+	node = std::make_shared<badem::node> (*io_context, peering_port, path, alarm, logging, work, node_flags);
 	node->active.stop ();
 }
 
@@ -1578,7 +1363,46 @@ badem::inactive_node::~inactive_node ()
 	node->stop ();
 }
 
-std::unique_ptr<badem::block_store> badem::make_store (bool & init, badem::logger_mt & logger, boost::filesystem::path const & path)
+badem::node_flags const & badem::inactive_node_flag_defaults ()
 {
-	return std::make_unique<badem::mdb_store> (init, logger, path);
+	static badem::node_flags node_flags;
+	node_flags.inactive_node = true;
+	node_flags.read_only = true;
+	node_flags.cache_representative_weights_from_frontiers = false;
+	node_flags.cache_cemented_count_from_frontiers = false;
+	return node_flags;
+}
+
+std::unique_ptr<badem::block_store> badem::make_store (badem::logger_mt & logger, boost::filesystem::path const & path, bool read_only, bool add_db_postfix, badem::rocksdb_config const & rocksdb_config, badem::txn_tracking_config const & txn_tracking_config_a, std::chrono::milliseconds block_processor_batch_max_time_a, int lmdb_max_dbs, size_t batch_size, bool backup_before_upgrade, bool use_rocksdb_backend)
+{
+#if BADEM_ROCKSDB
+	auto make_rocksdb = [&logger, add_db_postfix, &path, &rocksdb_config, read_only]() {
+		return std::make_unique<badem::rocksdb_store> (logger, add_db_postfix ? path / "rocksdb" : path, rocksdb_config, read_only);
+	};
+#endif
+
+	if (use_rocksdb_backend)
+	{
+#if BADEM_ROCKSDB
+		return make_rocksdb ();
+#else
+		logger.always_log (std::error_code (badem::error_config::rocksdb_enabled_but_not_supported).message ());
+		release_assert (false);
+		return nullptr;
+#endif
+	}
+	else
+	{
+#if BADEM_ROCKSDB
+		/** To use RocksDB in tests make sure the node is built with the cmake variable -DBADEM_ROCKSDB=ON and the environment variable TEST_USE_ROCKSDB=1 is set */
+		static badem::network_constants network_constants;
+		auto use_rocksdb_str = std::getenv ("TEST_USE_ROCKSDB");
+		if (use_rocksdb_str && (boost::lexical_cast<int> (use_rocksdb_str) == 1) && network_constants.is_test_network ())
+		{
+			return make_rocksdb ();
+		}
+#endif
+	}
+
+	return std::make_unique<badem::mdb_store> (logger, add_db_postfix ? path / "data.ldb" : path, txn_tracking_config_a, block_processor_batch_max_time_a, lmdb_max_dbs, batch_size, backup_before_upgrade);
 }

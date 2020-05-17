@@ -8,6 +8,7 @@
 
 namespace badem
 {
+class tomlconfig;
 class rpc_child_process_config final
 {
 public:
@@ -20,8 +21,10 @@ class node_rpc_config final
 public:
 	badem::error serialize_json (badem::jsonconfig &) const;
 	badem::error deserialize_json (bool & upgraded_a, badem::jsonconfig &, boost::filesystem::path const & data_path);
+	badem::error serialize_toml (badem::tomlconfig & toml) const;
+	badem::error deserialize_toml (badem::tomlconfig & toml);
+
 	bool enable_sign_hash{ false };
-	uint64_t max_work_generate_difficulty{ 0xffffffffc0000000 };
 	badem::rpc_child_process_config child_process;
 	static unsigned json_version ()
 	{

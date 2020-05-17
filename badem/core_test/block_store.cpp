@@ -5,23 +5,30 @@
 #include <badem/node/node.hpp>
 #include <badem/secure/versioning.hpp>
 
+#if BADEM_ROCKSDB
+#include <badem/node/rocksdb/rocksdb.hpp>
+#endif
+
 #include <gtest/gtest.h>
 
 #include <fstream>
 
+#include <stdlib.h>
+
 namespace
 {
-void modify_account_info_to_v13 (badem::mdb_store & store, badem::transaction const & transaction_a, badem::account const & account_a);
-void modify_account_info_to_v14 (badem::mdb_store & store, badem::transaction const & transaction_a, badem::account const & account_a, uint64_t confirmation_height);
+void modify_account_info_to_v13 (badem::mdb_store & store, badem::transaction const & transaction_a, badem::account const & account_a, badem::block_hash const & rep_block);
+void modify_account_info_to_v14 (badem::mdb_store & store, badem::transaction const & transaction_a, badem::account const & account_a, uint64_t confirmation_height, badem::block_hash const & rep_block);
 void modify_genesis_account_info_to_v5 (badem::mdb_store & store, badem::transaction const & transaction_a);
+void write_sideband_v12 (badem::mdb_store & store_a, badem::transaction & transaction_a, badem::block & block_a, badem::block_hash const & successor_a, MDB_dbi db_a);
+void write_sideband_v14 (badem::mdb_store & store_a, badem::transaction & transaction_a, badem::block const & block_a, MDB_dbi db_a);
 }
 
 TEST (block_store, construction)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 }
 
 TEST (block_store, sideband_serialization)
@@ -52,16 +59,15 @@ TEST (block_store, sideband_serialization)
 TEST (block_store, add_item)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::open_block block (0, 1, 0, badem::keypair ().prv, 0, 0);
-	badem::uint256_union hash1 (block.hash ());
+	auto hash1 (block.hash ());
 	auto transaction (store->tx_begin_write ());
 	auto latest1 (store->block_get (transaction, hash1));
 	ASSERT_EQ (nullptr, latest1);
 	ASSERT_FALSE (store->block_exists (transaction, hash1));
-	badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0);
+	badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 	store->block_put (transaction, hash1, block, sideband);
 	auto latest2 (store->block_get (transaction, hash1));
 	ASSERT_NE (nullptr, latest2);
@@ -76,12 +82,11 @@ TEST (block_store, add_item)
 TEST (block_store, clear_successor)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::open_block block1 (0, 1, 0, badem::keypair ().prv, 0, 0);
 	auto transaction (store->tx_begin_write ());
-	badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0);
+	badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 	store->block_put (transaction, block1.hash (), block1, sideband);
 	badem::open_block block2 (0, 2, 0, badem::keypair ().prv, 0, 0);
 	store->block_put (transaction, block2.hash (), block2, sideband);
@@ -99,17 +104,16 @@ TEST (block_store, clear_successor)
 TEST (block_store, add_nonempty_block)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::keypair key1;
 	badem::open_block block (0, 1, 0, badem::keypair ().prv, 0, 0);
-	badem::uint256_union hash1 (block.hash ());
+	auto hash1 (block.hash ());
 	block.signature = badem::sign_message (key1.prv, key1.pub, hash1);
 	auto transaction (store->tx_begin_write ());
 	auto latest1 (store->block_get (transaction, hash1));
 	ASSERT_EQ (nullptr, latest1);
-	badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0);
+	badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 	store->block_put (transaction, hash1, block, sideband);
 	auto latest2 (store->block_get (transaction, hash1));
 	ASSERT_NE (nullptr, latest2);
@@ -119,25 +123,24 @@ TEST (block_store, add_nonempty_block)
 TEST (block_store, add_two_items)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::keypair key1;
 	badem::open_block block (0, 1, 1, badem::keypair ().prv, 0, 0);
-	badem::uint256_union hash1 (block.hash ());
+	auto hash1 (block.hash ());
 	block.signature = badem::sign_message (key1.prv, key1.pub, hash1);
 	auto transaction (store->tx_begin_write ());
 	auto latest1 (store->block_get (transaction, hash1));
 	ASSERT_EQ (nullptr, latest1);
 	badem::open_block block2 (0, 1, 3, badem::keypair ().prv, 0, 0);
 	block2.hashables.account = 3;
-	badem::uint256_union hash2 (block2.hash ());
+	auto hash2 (block2.hash ());
 	block2.signature = badem::sign_message (key1.prv, key1.pub, hash2);
 	auto latest2 (store->block_get (transaction, hash2));
 	ASSERT_EQ (nullptr, latest2);
-	badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0);
+	badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 	store->block_put (transaction, hash1, block, sideband);
-	badem::block_sideband sideband2 (badem::block_type::open, 0, 0, 0, 0, 0);
+	badem::block_sideband sideband2 (badem::block_type::open, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 	store->block_put (transaction, hash2, block2, sideband2);
 	auto latest3 (store->block_get (transaction, hash1));
 	ASSERT_NE (nullptr, latest3);
@@ -151,20 +154,19 @@ TEST (block_store, add_two_items)
 TEST (block_store, add_receive)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::keypair key1;
 	badem::keypair key2;
 	badem::open_block block1 (0, 1, 0, badem::keypair ().prv, 0, 0);
 	auto transaction (store->tx_begin_write ());
-	badem::block_sideband sideband1 (badem::block_type::open, 0, 0, 0, 0, 0);
+	badem::block_sideband sideband1 (badem::block_type::open, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 	store->block_put (transaction, block1.hash (), block1, sideband1);
 	badem::receive_block block (block1.hash (), 1, badem::keypair ().prv, 2, 3);
 	badem::block_hash hash1 (block.hash ());
 	auto latest1 (store->block_get (transaction, hash1));
 	ASSERT_EQ (nullptr, latest1);
-	badem::block_sideband sideband (badem::block_type::receive, 0, 0, 0, 0, 0);
+	badem::block_sideband sideband (badem::block_type::receive, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 	store->block_put (transaction, hash1, block, sideband);
 	auto latest2 (store->block_get (transaction, hash1));
 	ASSERT_NE (nullptr, latest2);
@@ -174,9 +176,8 @@ TEST (block_store, add_receive)
 TEST (block_store, add_pending)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::keypair key1;
 	badem::pending_key key2 (0, 0);
 	badem::pending_info pending1;
@@ -193,9 +194,8 @@ TEST (block_store, add_pending)
 TEST (block_store, pending_iterator)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	auto transaction (store->tx_begin_write ());
 	ASSERT_EQ (store->pending_end (), store->pending_begin (transaction));
 	store->pending_put (transaction, badem::pending_key (1, 2), { 2, 3, badem::epoch::epoch_1 });
@@ -219,9 +219,8 @@ TEST (block_store, pending_iterator)
 TEST (block_store, pending_iterator_comparison)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::stat stats;
 	auto transaction (store->tx_begin_write ());
 	// Populate pending
@@ -263,13 +262,15 @@ TEST (block_store, pending_iterator_comparison)
 TEST (block_store, genesis)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::genesis genesis;
 	auto hash (genesis.hash ());
+	badem::rep_weights rep_weights;
+	std::atomic<uint64_t> cemented_count{ 0 };
+	std::atomic<uint64_t> block_count_cache{ 0 };
 	auto transaction (store->tx_begin_write ());
-	store->initialize (transaction, genesis);
+	store->initialize (transaction, genesis, rep_weights, cemented_count, block_count_cache);
 	badem::account_info info;
 	ASSERT_FALSE (store->account_get (transaction, badem::genesis_account, info));
 	ASSERT_EQ (hash, info.head);
@@ -289,27 +290,11 @@ TEST (block_store, genesis)
 	ASSERT_EQ (badem::genesis_account, badem::test_genesis_key.pub);
 }
 
-TEST (representation, changes)
-{
-	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
-	badem::keypair key1;
-	auto transaction (store->tx_begin_write ());
-	ASSERT_EQ (0, store->representation_get (transaction, key1.pub));
-	store->representation_put (transaction, key1.pub, 1);
-	ASSERT_EQ (1, store->representation_get (transaction, key1.pub));
-	store->representation_put (transaction, key1.pub, 2);
-	ASSERT_EQ (2, store->representation_get (transaction, key1.pub));
-}
-
 TEST (bootstrap, simple)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	auto block1 (std::make_shared<badem::send_block> (0, 1, 2, badem::keypair ().prv, 4, 5));
 	auto transaction (store->tx_begin_write ());
 	auto block2 (store->unchecked_get (transaction, block1->previous ()));
@@ -326,9 +311,8 @@ TEST (bootstrap, simple)
 TEST (unchecked, multiple)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	badem::mdb_store store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	badem::mdb_store store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store.init_error ());
 	auto block1 (std::make_shared<badem::send_block> (4, 1, 2, badem::keypair ().prv, 4, 5));
 	auto transaction (store.tx_begin_write ());
 	auto block2 (store.unchecked_get (transaction, block1->previous ()));
@@ -344,9 +328,8 @@ TEST (unchecked, multiple)
 TEST (unchecked, double_put)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	auto block1 (std::make_shared<badem::send_block> (4, 1, 2, badem::keypair ().prv, 4, 5));
 	auto transaction (store->tx_begin_write ());
 	auto block2 (store->unchecked_get (transaction, block1->previous ()));
@@ -360,9 +343,8 @@ TEST (unchecked, double_put)
 TEST (unchecked, multiple_get)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	auto block1 (std::make_shared<badem::send_block> (4, 1, 2, badem::keypair ().prv, 4, 5));
 	auto block2 (std::make_shared<badem::send_block> (3, 1, 2, badem::keypair ().prv, 4, 5));
 	auto block3 (std::make_shared<badem::send_block> (5, 1, 2, badem::keypair ().prv, 4, 5));
@@ -412,9 +394,8 @@ TEST (unchecked, multiple_get)
 TEST (block_store, empty_accounts)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	auto transaction (store->tx_begin_read ());
 	auto begin (store->latest_begin (transaction));
 	auto end (store->latest_end ());
@@ -424,12 +405,11 @@ TEST (block_store, empty_accounts)
 TEST (block_store, one_block)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::open_block block1 (0, 1, 0, badem::keypair ().prv, 0, 0);
 	auto transaction (store->tx_begin_write ());
-	badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0);
+	badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 	store->block_put (transaction, block1.hash (), block1, sideband);
 	ASSERT_TRUE (store->block_exists (transaction, block1.hash ()));
 }
@@ -437,9 +417,8 @@ TEST (block_store, one_block)
 TEST (block_store, empty_bootstrap)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	auto transaction (store->tx_begin_read ());
 	auto begin (store->unchecked_begin (transaction));
 	auto end (store->unchecked_end ());
@@ -449,9 +428,8 @@ TEST (block_store, empty_bootstrap)
 TEST (block_store, one_bootstrap)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	auto block1 (std::make_shared<badem::send_block> (0, 1, 2, badem::keypair ().prv, 4, 5));
 	auto transaction (store->tx_begin_write ());
 	store->unchecked_put (transaction, block1->hash (), block1);
@@ -459,7 +437,7 @@ TEST (block_store, one_bootstrap)
 	auto begin (store->unchecked_begin (transaction));
 	auto end (store->unchecked_end ());
 	ASSERT_NE (end, begin);
-	badem::uint256_union hash1 (begin->first.key ());
+	auto hash1 (begin->first.key ());
 	ASSERT_EQ (block1->hash (), hash1);
 	auto blocks (store->unchecked_get (transaction, hash1));
 	ASSERT_EQ (1, blocks.size ());
@@ -472,9 +450,8 @@ TEST (block_store, one_bootstrap)
 TEST (block_store, unchecked_begin_search)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::keypair key0;
 	badem::send_block block1 (0, 1, 2, key0.prv, key0.pub, 3);
 	badem::send_block block2 (5, 6, 7, key0.prv, key0.pub, 8);
@@ -483,9 +460,8 @@ TEST (block_store, unchecked_begin_search)
 TEST (block_store, frontier_retrieval)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::account account1 (0);
 	badem::account_info info1 (0, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 	auto transaction (store->tx_begin_write ());
@@ -499,9 +475,8 @@ TEST (block_store, frontier_retrieval)
 TEST (block_store, one_account)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::account account (0);
 	badem::block_hash hash (0);
 	auto transaction (store->tx_begin_write ());
@@ -526,9 +501,8 @@ TEST (block_store, one_account)
 TEST (block_store, two_block)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::open_block block1 (0, 1, 1, badem::keypair ().prv, 0, 0);
 	block1.hashables.account = 1;
 	std::vector<badem::block_hash> hashes;
@@ -536,12 +510,12 @@ TEST (block_store, two_block)
 	hashes.push_back (block1.hash ());
 	blocks.push_back (block1);
 	auto transaction (store->tx_begin_write ());
-	badem::block_sideband sideband1 (badem::block_type::open, 0, 0, 0, 0, 0);
+	badem::block_sideband sideband1 (badem::block_type::open, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 	store->block_put (transaction, hashes[0], block1, sideband1);
 	badem::open_block block2 (0, 1, 2, badem::keypair ().prv, 0, 0);
 	hashes.push_back (block2.hash ());
 	blocks.push_back (block2);
-	badem::block_sideband sideband2 (badem::block_type::open, 0, 0, 0, 0, 0);
+	badem::block_sideband sideband2 (badem::block_type::open, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 	store->block_put (transaction, hashes[1], block2, sideband2);
 	ASSERT_TRUE (store->block_exists (transaction, block1.hash ()));
 	ASSERT_TRUE (store->block_exists (transaction, block2.hash ()));
@@ -550,9 +524,8 @@ TEST (block_store, two_block)
 TEST (block_store, two_account)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::account account1 (1);
 	badem::block_hash hash1 (2);
 	badem::account account2 (3);
@@ -591,9 +564,8 @@ TEST (block_store, two_account)
 TEST (block_store, latest_find)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::account account1 (1);
 	badem::block_hash hash1 (2);
 	badem::account account2 (3);
@@ -614,12 +586,11 @@ TEST (block_store, latest_find)
 	ASSERT_EQ (second, find3);
 }
 
-TEST (block_store, bad_path)
+TEST (mdb_block_store, bad_path)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, boost::filesystem::path ("///"));
-	ASSERT_TRUE (init);
+	badem::mdb_store store (logger, boost::filesystem::path ("///"));
+	ASSERT_TRUE (store.init_error ());
 }
 
 TEST (block_store, DISABLED_already_open) // File can be shared
@@ -631,17 +602,15 @@ TEST (block_store, DISABLED_already_open) // File can be shared
 	file.open (path.string ().c_str ());
 	ASSERT_TRUE (file.is_open ());
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, path);
-	ASSERT_TRUE (init);
+	auto store = badem::make_store (logger, path);
+	ASSERT_TRUE (store->init_error ());
 }
 
 TEST (block_store, roots)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::send_block send_block (0, 1, 2, badem::keypair ().prv, 4, 5);
 	ASSERT_EQ (send_block.hashables.previous, send_block.root ());
 	badem::change_block change_block (0, 1, badem::keypair ().prv, 3, 4);
@@ -655,9 +624,8 @@ TEST (block_store, roots)
 TEST (block_store, pending_exists)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::pending_key two (2, 0);
 	badem::pending_info pending;
 	auto transaction (store->tx_begin_write ());
@@ -669,24 +637,22 @@ TEST (block_store, pending_exists)
 TEST (block_store, latest_exists)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
-	badem::block_hash two (2);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
+	badem::account two (2);
 	badem::account_info info;
 	auto transaction (store->tx_begin_write ());
 	store->confirmation_height_put (transaction, two, 0);
 	store->account_put (transaction, two, info);
-	badem::block_hash one (1);
+	badem::account one (1);
 	ASSERT_FALSE (store->account_exists (transaction, one));
 }
 
 TEST (block_store, large_iteration)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	std::unordered_set<badem::account> accounts1;
 	for (auto i (0); i < 1000; ++i)
 	{
@@ -713,9 +679,8 @@ TEST (block_store, large_iteration)
 TEST (block_store, frontier)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	auto transaction (store->tx_begin_write ());
 	badem::block_hash hash (100);
 	badem::account account (200);
@@ -729,15 +694,14 @@ TEST (block_store, frontier)
 TEST (block_store, block_replace)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::send_block send1 (0, 0, 0, badem::keypair ().prv, 0, 1);
 	badem::send_block send2 (0, 0, 0, badem::keypair ().prv, 0, 2);
 	auto transaction (store->tx_begin_write ());
-	badem::block_sideband sideband1 (badem::block_type::send, 0, 0, 0, 0, 0);
+	badem::block_sideband sideband1 (badem::block_type::send, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 	store->block_put (transaction, 0, send1, sideband1);
-	badem::block_sideband sideband2 (badem::block_type::send, 0, 0, 0, 0, 0);
+	badem::block_sideband sideband2 (badem::block_type::send, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 	store->block_put (transaction, 0, send2, sideband2);
 	auto block3 (store->block_get (transaction, 0));
 	ASSERT_NE (nullptr, block3);
@@ -747,15 +711,14 @@ TEST (block_store, block_replace)
 TEST (block_store, block_count)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	{
 		auto transaction (store->tx_begin_write ());
 		ASSERT_EQ (0, store->block_count (transaction).sum ());
 		badem::open_block block (0, 1, 0, badem::keypair ().prv, 0, 0);
-		badem::uint256_union hash1 (block.hash ());
-		badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0);
+		auto hash1 (block.hash ());
+		badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 		store->block_put (transaction, hash1, block, sideband);
 	}
 	auto transaction (store->tx_begin_read ());
@@ -765,9 +728,8 @@ TEST (block_store, block_count)
 TEST (block_store, account_count)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	{
 		auto transaction (store->tx_begin_write ());
 		ASSERT_EQ (0, store->account_count (transaction));
@@ -779,25 +741,25 @@ TEST (block_store, account_count)
 	ASSERT_EQ (1, store->account_count (transaction));
 }
 
-TEST (block_store, cemented_count)
+TEST (block_store, cemented_count_cache)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	auto transaction (store->tx_begin_write ());
-	ASSERT_EQ (0, store->cemented_count (transaction));
 	badem::genesis genesis;
-	store->initialize (transaction, genesis);
-	ASSERT_EQ (1, store->cemented_count (transaction));
+	badem::rep_weights rep_weights;
+	std::atomic<uint64_t> cemented_count{ 0 };
+	std::atomic<uint64_t> block_count_cache{ 0 };
+	store->initialize (transaction, genesis, rep_weights, cemented_count, block_count_cache);
+	ASSERT_EQ (1, cemented_count);
 }
 
 TEST (block_store, sequence_increment)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::keypair key1;
 	badem::keypair key2;
 	auto block1 (std::make_shared<badem::open_block> (0, 1, 0, badem::keypair ().prv, 0, 0));
@@ -830,48 +792,46 @@ TEST (mdb_block_store, upgrade_v2_v3)
 	auto path (badem::unique_path ());
 	{
 		badem::logger_mt logger;
-		bool init (false);
-		badem::mdb_store store (init, logger, path);
-		ASSERT_TRUE (!init);
+		badem::mdb_store store (logger, path);
+		ASSERT_TRUE (!store.init_error ());
 		auto transaction (store.tx_begin_write ());
 		badem::genesis genesis;
 		auto hash (genesis.hash ());
-		store.initialize (transaction, genesis);
 		badem::stat stats;
 		badem::ledger ledger (store, stats);
+		store.initialize (transaction, genesis, ledger.rep_weights, ledger.cemented_count, ledger.block_count_cache);
 		badem::work_pool pool (std::numeric_limits<unsigned>::max ());
-		badem::change_block change (hash, key1.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, pool.generate (hash));
+		badem::change_block change (hash, key1.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (hash));
 		change_hash = change.hash ();
 		ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, change).code);
-		ASSERT_EQ (0, ledger.weight (transaction, badem::test_genesis_key.pub));
-		ASSERT_EQ (badem::genesis_amount, ledger.weight (transaction, key1.pub));
+		ASSERT_EQ (0, ledger.weight (badem::test_genesis_key.pub));
+		ASSERT_EQ (badem::genesis_amount, ledger.weight (key1.pub));
 		store.version_put (transaction, 2);
-		store.representation_put (transaction, key1.pub, 7);
-		ASSERT_EQ (7, ledger.weight (transaction, key1.pub));
+		ledger.rep_weights.representation_put (key1.pub, 7);
+		ASSERT_EQ (7, ledger.weight (key1.pub));
 		ASSERT_EQ (2, store.version_get (transaction));
-		store.representation_put (transaction, key2.pub, 6);
-		ASSERT_EQ (6, ledger.weight (transaction, key2.pub));
+		ledger.rep_weights.representation_put (key2.pub, 6);
+		ASSERT_EQ (6, ledger.weight (key2.pub));
 		badem::account_info info;
 		ASSERT_FALSE (store.account_get (transaction, badem::test_genesis_key.pub, info));
-		info.rep_block = 42;
-		badem::account_info_v5 info_old (info.head, info.rep_block, info.open_block, info.balance, info.modified);
+		auto rep_block = ledger.representative (transaction, ledger.latest (transaction, badem::test_genesis_key.pub));
+		badem::account_info_v5 info_old (info.head, rep_block, info.open_block, info.balance, info.modified);
 		auto status (mdb_put (store.env.tx (transaction), store.accounts_v0, badem::mdb_val (badem::test_genesis_key.pub), badem::mdb_val (sizeof (info_old), &info_old), 0));
 		(void)status;
 		assert (status == 0);
 	}
 	badem::logger_mt logger;
-	bool init (false);
-	badem::mdb_store store (init, logger, path);
+	badem::mdb_store store (logger, path);
 	badem::stat stats;
 	badem::ledger ledger (store, stats);
 	auto transaction (store.tx_begin_write ());
-	ASSERT_TRUE (!init);
+	ASSERT_TRUE (!store.init_error ());
 	ASSERT_LT (2, store.version_get (transaction));
-	ASSERT_EQ (badem::genesis_amount, ledger.weight (transaction, key1.pub));
-	ASSERT_EQ (0, ledger.weight (transaction, key2.pub));
+	ASSERT_EQ (badem::genesis_amount, ledger.weight (key1.pub));
+	ASSERT_EQ (0, ledger.weight (key2.pub));
 	badem::account_info info;
 	ASSERT_FALSE (store.account_get (transaction, badem::test_genesis_key.pub, info));
-	ASSERT_EQ (change_hash, info.rep_block);
+	ASSERT_EQ (change_hash, ledger.representative (transaction, ledger.latest (transaction, badem::test_genesis_key.pub)));
 }
 
 TEST (mdb_block_store, upgrade_v3_v4)
@@ -882,9 +842,8 @@ TEST (mdb_block_store, upgrade_v3_v4)
 	auto path (badem::unique_path ());
 	{
 		badem::logger_mt logger;
-		bool init (false);
-		badem::mdb_store store (init, logger, path);
-		ASSERT_FALSE (init);
+		badem::mdb_store store (logger, path);
+		ASSERT_FALSE (store.init_error ());
 		auto transaction (store.tx_begin_write ());
 		store.version_put (transaction, 3);
 		badem::pending_info_v3 info (key1.pub, 100, key2.pub);
@@ -892,14 +851,13 @@ TEST (mdb_block_store, upgrade_v3_v4)
 		ASSERT_EQ (0, status);
 	}
 	badem::logger_mt logger;
-	bool init (false);
-	badem::mdb_store store (init, logger, path);
+	badem::mdb_store store (logger, path);
 	badem::stat stats;
 	badem::ledger ledger (store, stats);
 	auto transaction (store.tx_begin_write ());
-	ASSERT_FALSE (init);
+	ASSERT_FALSE (store.init_error ());
 	ASSERT_LT (3, store.version_get (transaction));
-	badem::pending_key key (key2.pub, key3.pub);
+	badem::pending_key key (key2.pub, reinterpret_cast<badem::block_hash const &> (key3.pub));
 	badem::pending_info info;
 	auto error (store.pending_get (transaction, key, info));
 	ASSERT_FALSE (error);
@@ -915,20 +873,19 @@ TEST (mdb_block_store, upgrade_v4_v5)
 	auto path (badem::unique_path ());
 	{
 		badem::logger_mt logger;
-		bool init (false);
-		badem::mdb_store store (init, logger, path);
-		ASSERT_FALSE (init);
+		badem::mdb_store store (logger, path);
+		ASSERT_FALSE (store.init_error ());
 		auto transaction (store.tx_begin_write ());
 		badem::genesis genesis;
 		badem::stat stats;
 		badem::ledger ledger (store, stats);
-		store.initialize (transaction, genesis);
+		store.initialize (transaction, genesis, ledger.rep_weights, ledger.cemented_count, ledger.block_count_cache);
 		store.version_put (transaction, 4);
 		badem::account_info info;
 		ASSERT_FALSE (store.account_get (transaction, badem::test_genesis_key.pub, info));
 		badem::keypair key0;
 		badem::work_pool pool (std::numeric_limits<unsigned>::max ());
-		badem::send_block block0 (info.head, key0.pub, badem::genesis_amount - badem::kBDM_ratio, badem::test_genesis_key.prv, badem::test_genesis_key.pub, pool.generate (info.head));
+		badem::send_block block0 (info.head, key0.pub, badem::genesis_amount - badem::Gbdm_ratio, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (info.head));
 		ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, block0).code);
 		hash = block0.hash ();
 		auto original (store.block_get (transaction, info.head));
@@ -936,11 +893,13 @@ TEST (mdb_block_store, upgrade_v4_v5)
 		store.block_successor_clear (transaction, info.head);
 		ASSERT_TRUE (store.block_successor (transaction, genesis_hash).is_zero ());
 		modify_genesis_account_info_to_v5 (store, transaction);
+		// The pending send needs to be the correct version
+		auto status (mdb_put (store.env.tx (transaction), store.pending_v0, badem::mdb_val (badem::pending_key (key0.pub, block0.hash ())), badem::mdb_val (badem::pending_info_v14 (badem::genesis_account, badem::Gbdm_ratio, badem::epoch::epoch_0)), 0));
+		ASSERT_EQ (status, MDB_SUCCESS);
 	}
 	badem::logger_mt logger;
-	bool init (false);
-	badem::mdb_store store (init, logger, path);
-	ASSERT_FALSE (init);
+	badem::mdb_store store (logger, path);
+	ASSERT_FALSE (store.init_error ());
 	auto transaction (store.tx_begin_read ());
 	ASSERT_EQ (hash, store.block_successor (transaction, genesis_hash));
 }
@@ -948,13 +907,15 @@ TEST (mdb_block_store, upgrade_v4_v5)
 TEST (block_store, block_random)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 	badem::genesis genesis;
 	{
+		badem::rep_weights rep_weights;
+		std::atomic<uint64_t> cemented_count{ 0 };
+		std::atomic<uint64_t> block_count_cache{ 0 };
 		auto transaction (store->tx_begin_write ());
-		store->initialize (transaction, genesis);
+		store->initialize (transaction, genesis, rep_weights, cemented_count, block_count_cache);
 	}
 	auto transaction (store->tx_begin_read ());
 	auto block (store->block_random (transaction));
@@ -967,19 +928,20 @@ TEST (mdb_block_store, upgrade_v5_v6)
 	auto path (badem::unique_path ());
 	{
 		badem::logger_mt logger;
-		bool init (false);
-		badem::mdb_store store (init, logger, path);
-		ASSERT_FALSE (init);
+		badem::mdb_store store (logger, path);
+		ASSERT_FALSE (store.init_error ());
 		auto transaction (store.tx_begin_write ());
 		badem::genesis genesis;
-		store.initialize (transaction, genesis);
+		badem::rep_weights rep_weights;
+		std::atomic<uint64_t> cemented_count{ 0 };
+		std::atomic<uint64_t> block_count_cache{ 0 };
+		store.initialize (transaction, genesis, rep_weights, cemented_count, block_count_cache);
 		store.version_put (transaction, 5);
 		modify_genesis_account_info_to_v5 (store, transaction);
 	}
 	badem::logger_mt logger;
-	bool init (false);
-	badem::mdb_store store (init, logger, path);
-	ASSERT_FALSE (init);
+	badem::mdb_store store (logger, path);
+	ASSERT_FALSE (store.init_error ());
 	auto transaction (store.tx_begin_read ());
 	badem::account_info info;
 	store.account_get (transaction, badem::test_genesis_key.pub, info);
@@ -991,23 +953,24 @@ TEST (mdb_block_store, upgrade_v6_v7)
 	auto path (badem::unique_path ());
 	{
 		badem::logger_mt logger;
-		bool init (false);
-		badem::mdb_store store (init, logger, path);
-		ASSERT_FALSE (init);
+		badem::mdb_store store (logger, path);
+		ASSERT_FALSE (store.init_error ());
 		auto transaction (store.tx_begin_write ());
 		badem::genesis genesis;
-		store.initialize (transaction, genesis);
+		badem::rep_weights rep_weights;
+		std::atomic<uint64_t> cemented_count{ 0 };
+		std::atomic<uint64_t> block_count_cache{ 0 };
+		store.initialize (transaction, genesis, rep_weights, cemented_count, block_count_cache);
 		store.version_put (transaction, 6);
-		modify_account_info_to_v13 (store, transaction, badem::genesis_account);
+		modify_account_info_to_v13 (store, transaction, badem::genesis_account, genesis.open->hash ());
 		auto send1 (std::make_shared<badem::send_block> (0, 0, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, 0));
 		store.unchecked_put (transaction, send1->hash (), send1);
 		store.flush (transaction);
 		ASSERT_NE (store.unchecked_end (), store.unchecked_begin (transaction));
 	}
 	badem::logger_mt logger;
-	bool init (false);
-	badem::mdb_store store (init, logger, path);
-	ASSERT_FALSE (init);
+	badem::mdb_store store (logger, path);
+	ASSERT_FALSE (store.init_error ());
 	auto transaction (store.tx_begin_read ());
 	ASSERT_EQ (store.unchecked_end (), store.unchecked_begin (transaction));
 }
@@ -1017,8 +980,7 @@ TEST (block_store, DISABLED_change_dupsort) // Unchecked is no longer dupsort ta
 {
 	auto path (badem::unique_path ());
 	badem::logger_mt logger;
-	bool init (false);
-	badem::mdb_store store (init, logger, path);
+	badem::mdb_store store (logger, path);
 	auto transaction (store.tx_begin_write ());
 	ASSERT_EQ (0, mdb_drop (store.env.tx (transaction), store.unchecked, 1));
 	ASSERT_EQ (0, mdb_dbi_open (store.env.tx (transaction), "unchecked", MDB_CREATE, &store.unchecked));
@@ -1063,17 +1025,15 @@ TEST (mdb_block_store, upgrade_v7_v8)
 	auto path (badem::unique_path ());
 	{
 		badem::logger_mt logger;
-		bool init (false);
-		badem::mdb_store store (init, logger, path);
+		badem::mdb_store store (logger, path);
 		auto transaction (store.tx_begin_write ());
 		ASSERT_EQ (0, mdb_drop (store.env.tx (transaction), store.unchecked, 1));
 		ASSERT_EQ (0, mdb_dbi_open (store.env.tx (transaction), "unchecked", MDB_CREATE, &store.unchecked));
 		store.version_put (transaction, 7);
 	}
 	badem::logger_mt logger;
-	bool init (false);
-	badem::mdb_store store (init, logger, path);
-	ASSERT_FALSE (init);
+	badem::mdb_store store (logger, path);
+	ASSERT_FALSE (store.init_error ());
 	auto transaction (store.tx_begin_write ());
 	auto send1 (std::make_shared<badem::send_block> (0, 0, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, 0));
 	auto send2 (std::make_shared<badem::send_block> (1, 0, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, 0));
@@ -1093,9 +1053,8 @@ TEST (block_store, sequence_flush)
 {
 	auto path (badem::unique_path ());
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, path);
-	ASSERT_FALSE (init);
+	auto store = badem::make_store (logger, path);
+	ASSERT_FALSE (store->init_error ());
 	auto transaction (store->tx_begin_write ());
 	badem::keypair key1;
 	auto send1 (std::make_shared<badem::send_block> (0, 0, 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, 0));
@@ -1111,9 +1070,8 @@ TEST (block_store, sequence_flush_by_hash)
 {
 	auto path (badem::unique_path ());
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, path);
-	ASSERT_FALSE (init);
+	auto store = badem::make_store (logger, path);
+	ASSERT_FALSE (store->init_error ());
 	auto transaction (store->tx_begin_write ());
 	badem::keypair key1;
 	std::vector<badem::block_hash> blocks1;
@@ -1135,8 +1093,7 @@ TEST (mdb_block_store, upgrade_v8_v9)
 	badem::keypair key;
 	{
 		badem::logger_mt logger;
-		bool init (false);
-		badem::mdb_store store (init, logger, path);
+		badem::mdb_store store (logger, path);
 		auto transaction (store.tx_begin_write ());
 		ASSERT_EQ (0, mdb_drop (store.env.tx (transaction), store.vote, 1));
 		ASSERT_EQ (0, mdb_dbi_open (store.env.tx (transaction), "sequence", MDB_CREATE, &store.vote));
@@ -1145,9 +1102,8 @@ TEST (mdb_block_store, upgrade_v8_v9)
 		store.version_put (transaction, 8);
 	}
 	badem::logger_mt logger;
-	bool init (false);
-	badem::mdb_store store (init, logger, path);
-	ASSERT_FALSE (init);
+	badem::mdb_store store (logger, path);
+	ASSERT_FALSE (store.init_error ());
 	auto transaction (store.tx_begin_read ());
 	ASSERT_LT (8, store.version_get (transaction));
 	auto vote (store.vote_get (transaction, key.pub));
@@ -1158,17 +1114,19 @@ TEST (mdb_block_store, upgrade_v8_v9)
 TEST (block_store, state_block)
 {
 	badem::logger_mt logger;
-	bool error (false);
-	auto store = badem::make_store (error, logger, badem::unique_path ());
-	ASSERT_FALSE (error);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_FALSE (store->init_error ());
 	badem::genesis genesis;
 	badem::keypair key1;
 	badem::state_block block1 (1, genesis.hash (), 3, 4, 6, key1.prv, key1.pub, 7);
 	{
 		auto transaction (store->tx_begin_write ());
-		store->initialize (transaction, genesis);
+		badem::rep_weights rep_weights;
+		std::atomic<uint64_t> cemented_count{ 0 };
+		std::atomic<uint64_t> block_count_cache{ 0 };
+		store->initialize (transaction, genesis, rep_weights, cemented_count, block_count_cache);
 		ASSERT_EQ (badem::block_type::state, block1.type ());
-		badem::block_sideband sideband1 (badem::block_type::state, 0, 0, 0, 0, 0);
+		badem::block_sideband sideband1 (badem::block_type::state, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 		store->block_put (transaction, block1.hash (), block1, sideband1);
 		ASSERT_TRUE (store->block_exists (transaction, block1.hash ()));
 		auto block2 (store->block_get (transaction, block1.hash ()));
@@ -1178,63 +1136,44 @@ TEST (block_store, state_block)
 	{
 		auto transaction (store->tx_begin_write ());
 		auto count (store->block_count (transaction));
-		ASSERT_EQ (1, count.state_v0);
-		ASSERT_EQ (0, count.state_v1);
+		ASSERT_EQ (1, count.state);
 		store->block_del (transaction, block1.hash ());
 		ASSERT_FALSE (store->block_exists (transaction, block1.hash ()));
 	}
 	auto transaction (store->tx_begin_read ());
 	auto count2 (store->block_count (transaction));
-	ASSERT_EQ (0, count2.state_v0);
-	ASSERT_EQ (0, count2.state_v1);
-}
-
-namespace
-{
-void write_legacy_sideband (badem::mdb_store & store_a, badem::transaction & transaction_a, badem::block & block_a, badem::block_hash const & successor_a, MDB_dbi db_a)
-{
-	std::vector<uint8_t> vector;
-	{
-		badem::vectorstream stream (vector);
-		block_a.serialize (stream);
-		badem::write (stream, successor_a);
-	}
-	MDB_val val{ vector.size (), vector.data () };
-	auto hash (block_a.hash ());
-	auto status2 (mdb_put (store_a.env.tx (transaction_a), db_a, badem::mdb_val (hash), &val, 0));
-	ASSERT_EQ (0, status2);
-	badem::block_sideband sideband;
-	auto block2 (store_a.block_get (transaction_a, block_a.hash (), &sideband));
-	ASSERT_NE (nullptr, block2);
-	ASSERT_EQ (0, sideband.height);
-};
+	ASSERT_EQ (0, count2.state);
 }
 
 TEST (mdb_block_store, upgrade_sideband_genesis)
 {
-	bool error (false);
 	badem::genesis genesis;
 	auto path (badem::unique_path ());
 	{
 		badem::logger_mt logger;
-		badem::mdb_store store (error, logger, path);
-		ASSERT_FALSE (error);
+		badem::mdb_store store (logger, path);
+		ASSERT_FALSE (store.init_error ());
 		auto transaction (store.tx_begin_write ());
 		store.version_put (transaction, 11);
-		store.initialize (transaction, genesis);
-		modify_account_info_to_v13 (store, transaction, badem::genesis_account);
+		badem::rep_weights rep_weights;
+		std::atomic<uint64_t> cemented_count{ 0 };
+		std::atomic<uint64_t> block_count_cache{ 0 };
+		store.initialize (transaction, genesis, rep_weights, cemented_count, block_count_cache);
+		modify_account_info_to_v13 (store, transaction, badem::genesis_account, genesis.open->hash ());
 		badem::block_sideband sideband;
 		auto genesis_block (store.block_get (transaction, genesis.hash (), &sideband));
 		ASSERT_NE (nullptr, genesis_block);
 		ASSERT_EQ (1, sideband.height);
-		write_legacy_sideband (store, transaction, *genesis_block, 0, store.open_blocks);
-		auto genesis_block2 (store.block_get (transaction, genesis.hash (), &sideband));
+		ASSERT_FALSE (mdb_dbi_open (store.env.tx (transaction), "state_v1", MDB_CREATE, &store.state_blocks_v1));
+		write_sideband_v12 (store, transaction, *genesis_block, 0, store.open_blocks);
+		badem::block_sideband_v14 sideband1;
+		auto genesis_block2 (store.block_get_v14 (transaction, genesis.hash (), &sideband1));
 		ASSERT_NE (nullptr, genesis_block);
-		ASSERT_EQ (0, sideband.height);
+		ASSERT_EQ (0, sideband1.height);
 	}
 	badem::logger_mt logger;
-	badem::mdb_store store (error, logger, path);
-	ASSERT_FALSE (error);
+	badem::mdb_store store (logger, path);
+	ASSERT_FALSE (store.init_error ());
 	auto transaction (store.tx_begin_read ());
 	ASSERT_TRUE (store.full_sideband (transaction));
 	badem::block_sideband sideband;
@@ -1245,30 +1184,34 @@ TEST (mdb_block_store, upgrade_sideband_genesis)
 
 TEST (mdb_block_store, upgrade_sideband_two_blocks)
 {
-	bool error (false);
 	badem::genesis genesis;
 	badem::block_hash hash2;
 	auto path (badem::unique_path ());
 	{
 		badem::logger_mt logger;
-		badem::mdb_store store (error, logger, path);
-		ASSERT_FALSE (error);
+		badem::mdb_store store (logger, path);
+		ASSERT_FALSE (store.init_error ());
 		badem::stat stat;
 		badem::ledger ledger (store, stat);
 		auto transaction (store.tx_begin_write ());
 		store.version_put (transaction, 11);
-		store.initialize (transaction, genesis);
+		store.initialize (transaction, genesis, ledger.rep_weights, ledger.cemented_count, ledger.block_count_cache);
 		badem::work_pool pool (std::numeric_limits<unsigned>::max ());
-		badem::state_block block (badem::test_genesis_key.pub, genesis.hash (), badem::test_genesis_key.pub, badem::genesis_amount - badem::kBDM_ratio, badem::test_genesis_key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, pool.generate (genesis.hash ()));
+		badem::state_block block (badem::test_genesis_key.pub, genesis.hash (), badem::test_genesis_key.pub, badem::genesis_amount - badem::Gbdm_ratio, badem::test_genesis_key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (genesis.hash ()));
 		hash2 = block.hash ();
 		ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, block).code);
-		write_legacy_sideband (store, transaction, *genesis.open, hash2, store.open_blocks);
-		write_legacy_sideband (store, transaction, block, 0, store.state_blocks_v0);
-		modify_account_info_to_v13 (store, transaction, badem::genesis_account);
+		store.block_del (transaction, hash2);
+		mdb_dbi_open (store.env.tx (transaction), "state_v1", MDB_CREATE, &store.state_blocks_v1);
+		mdb_dbi_open (store.env.tx (transaction), "state", MDB_CREATE, &store.state_blocks_v0);
+		write_sideband_v12 (store, transaction, *genesis.open, hash2, store.open_blocks);
+		write_sideband_v12 (store, transaction, block, 0, store.state_blocks_v0);
+		modify_account_info_to_v13 (store, transaction, badem::genesis_account, hash2);
+		auto status (mdb_put (store.env.tx (transaction), store.pending_v0, badem::mdb_val (badem::pending_key (badem::test_genesis_key.pub, block.hash ())), badem::mdb_val (badem::pending_info_v14 (badem::genesis_account, badem::Gbdm_ratio, badem::epoch::epoch_0)), 0));
+		ASSERT_EQ (status, MDB_SUCCESS);
 	}
 	badem::logger_mt logger;
-	badem::mdb_store store (error, logger, path);
-	ASSERT_FALSE (error);
+	badem::mdb_store store (logger, path);
+	ASSERT_FALSE (store.init_error ());
 	auto transaction (store.tx_begin_read ());
 	ASSERT_TRUE (store.full_sideband (transaction));
 	badem::block_sideband sideband;
@@ -1283,7 +1226,6 @@ TEST (mdb_block_store, upgrade_sideband_two_blocks)
 
 TEST (mdb_block_store, upgrade_sideband_two_accounts)
 {
-	bool error (false);
 	badem::genesis genesis;
 	badem::block_hash hash2;
 	badem::block_hash hash3;
@@ -1291,29 +1233,32 @@ TEST (mdb_block_store, upgrade_sideband_two_accounts)
 	auto path (badem::unique_path ());
 	{
 		badem::logger_mt logger;
-		badem::mdb_store store (error, logger, path);
-		ASSERT_FALSE (error);
+		badem::mdb_store store (logger, path);
 		badem::stat stat;
 		badem::ledger ledger (store, stat);
 		auto transaction (store.tx_begin_write ());
 		store.version_put (transaction, 11);
-		store.initialize (transaction, genesis);
+		store.initialize (transaction, genesis, ledger.rep_weights, ledger.cemented_count, ledger.block_count_cache);
 		badem::work_pool pool (std::numeric_limits<unsigned>::max ());
-		badem::state_block block1 (badem::test_genesis_key.pub, genesis.hash (), badem::test_genesis_key.pub, badem::genesis_amount - badem::kBDM_ratio, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, pool.generate (genesis.hash ()));
+		badem::state_block block1 (badem::test_genesis_key.pub, genesis.hash (), badem::test_genesis_key.pub, badem::genesis_amount - badem::Gbdm_ratio, key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (genesis.hash ()));
 		hash2 = block1.hash ();
 		ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, block1).code);
-		badem::state_block block2 (key.pub, 0, badem::test_genesis_key.pub, badem::kBDM_ratio, hash2, key.prv, key.pub, pool.generate (key.pub));
+		badem::state_block block2 (key.pub, 0, badem::test_genesis_key.pub, badem::Gbdm_ratio, hash2, key.prv, key.pub, *pool.generate (key.pub));
 		hash3 = block2.hash ();
 		ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, block2).code);
-		write_legacy_sideband (store, transaction, *genesis.open, hash2, store.open_blocks);
-		write_legacy_sideband (store, transaction, block1, 0, store.state_blocks_v0);
-		write_legacy_sideband (store, transaction, block2, 0, store.state_blocks_v0);
-		modify_account_info_to_v13 (store, transaction, badem::genesis_account);
-		modify_account_info_to_v13 (store, transaction, block2.account ());
+		store.block_del (transaction, hash2);
+		store.block_del (transaction, hash3);
+		mdb_dbi_open (store.env.tx (transaction), "state_v1", MDB_CREATE, &store.state_blocks_v1);
+		mdb_dbi_open (store.env.tx (transaction), "state", MDB_CREATE, &store.state_blocks_v0);
+		write_sideband_v12 (store, transaction, *genesis.open, hash2, store.open_blocks);
+		write_sideband_v12 (store, transaction, block1, 0, store.state_blocks_v0);
+		write_sideband_v12 (store, transaction, block2, 0, store.state_blocks_v0);
+		modify_account_info_to_v13 (store, transaction, badem::genesis_account, hash2);
+		modify_account_info_to_v13 (store, transaction, block2.account (), hash3);
 	}
 	badem::logger_mt logger;
-	badem::mdb_store store (error, logger, path);
-	ASSERT_FALSE (error);
+	badem::mdb_store store (logger, path);
+	ASSERT_FALSE (store.init_error ());
 	auto transaction (store.tx_begin_read ());
 	ASSERT_TRUE (store.full_sideband (transaction));
 	badem::block_sideband sideband;
@@ -1333,18 +1278,18 @@ TEST (mdb_block_store, upgrade_sideband_two_accounts)
 TEST (mdb_block_store, insert_after_legacy)
 {
 	badem::logger_mt logger;
-	bool error (false);
 	badem::genesis genesis;
-	badem::mdb_store store (error, logger, badem::unique_path ());
-	ASSERT_FALSE (error);
+	badem::mdb_store store (logger, badem::unique_path ());
+	ASSERT_FALSE (store.init_error ());
 	badem::stat stat;
 	badem::ledger ledger (store, stat);
 	auto transaction (store.tx_begin_write ());
 	store.version_put (transaction, 11);
-	store.initialize (transaction, genesis);
-	write_legacy_sideband (store, transaction, *genesis.open, 0, store.open_blocks);
+	store.initialize (transaction, genesis, ledger.rep_weights, ledger.cemented_count, ledger.block_count_cache);
+	mdb_dbi_open (store.env.tx (transaction), "state_v1", MDB_CREATE, &store.state_blocks_v1);
+	write_sideband_v12 (store, transaction, *genesis.open, 0, store.open_blocks);
 	badem::work_pool pool (std::numeric_limits<unsigned>::max ());
-	badem::state_block block (badem::test_genesis_key.pub, genesis.hash (), badem::test_genesis_key.pub, badem::genesis_amount - badem::kBDM_ratio, badem::test_genesis_key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, pool.generate (genesis.hash ()));
+	badem::state_block block (badem::test_genesis_key.pub, genesis.hash (), badem::test_genesis_key.pub, badem::genesis_amount - badem::Gbdm_ratio, badem::test_genesis_key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (genesis.hash ()));
 	ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, block).code);
 }
 
@@ -1352,16 +1297,16 @@ TEST (mdb_block_store, insert_after_legacy)
 TEST (mdb_block_store, legacy_account_computed)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	badem::mdb_store store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	badem::mdb_store store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store.init_error ());
 	badem::stat stats;
 	badem::ledger ledger (store, stats);
 	badem::genesis genesis;
 	auto transaction (store.tx_begin_write ());
-	store.initialize (transaction, genesis);
+	store.initialize (transaction, genesis, ledger.rep_weights, ledger.cemented_count, ledger.block_count_cache);
 	store.version_put (transaction, 11);
-	write_legacy_sideband (store, transaction, *genesis.open, 0, store.open_blocks);
+	mdb_dbi_open (store.env.tx (transaction), "state_v1", MDB_CREATE, &store.state_blocks_v1);
+	write_sideband_v12 (store, transaction, *genesis.open, 0, store.open_blocks);
 	ASSERT_EQ (badem::genesis_account, ledger.account (transaction, genesis.hash ()));
 }
 
@@ -1374,25 +1319,35 @@ TEST (mdb_block_store, upgrade_sideband_epoch)
 	badem::work_pool pool (std::numeric_limits<unsigned>::max ());
 	{
 		badem::logger_mt logger;
-		badem::mdb_store store (error, logger, path);
+		badem::mdb_store store (logger, path);
 		ASSERT_FALSE (error);
 		badem::stat stat;
-		badem::ledger ledger (store, stat, 42, badem::test_genesis_key.pub);
+		badem::ledger ledger (store, stat);
 		auto transaction (store.tx_begin_write ());
 		store.version_put (transaction, 11);
-		store.initialize (transaction, genesis);
-		badem::state_block block1 (badem::test_genesis_key.pub, genesis.hash (), badem::test_genesis_key.pub, badem::genesis_amount, 42, badem::test_genesis_key.prv, badem::test_genesis_key.pub, pool.generate (genesis.hash ()));
+		store.initialize (transaction, genesis, ledger.rep_weights, ledger.cemented_count, ledger.block_count_cache);
+		badem::state_block block1 (badem::test_genesis_key.pub, genesis.hash (), badem::test_genesis_key.pub, badem::genesis_amount, ledger.epoch_link (badem::epoch::epoch_1), badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (genesis.hash ()));
 		hash2 = block1.hash ();
+		ASSERT_FALSE (mdb_dbi_open (store.env.tx (transaction), "state_v1", MDB_CREATE, &store.state_blocks_v1));
 		ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, block1).code);
 		ASSERT_EQ (badem::epoch::epoch_1, store.block_version (transaction, hash2));
-		write_legacy_sideband (store, transaction, *genesis.open, hash2, store.open_blocks);
-		write_legacy_sideband (store, transaction, block1, 0, store.state_blocks_v1);
-		modify_account_info_to_v13 (store, transaction, badem::genesis_account);
+		store.block_del (transaction, hash2);
+		store.block_del (transaction, genesis.open->hash ());
+		write_sideband_v12 (store, transaction, *genesis.open, hash2, store.open_blocks);
+		write_sideband_v12 (store, transaction, block1, 0, store.state_blocks_v1);
+
+		badem::mdb_val value;
+		ASSERT_FALSE (mdb_get (store.env.tx (transaction), store.state_blocks_v1, badem::mdb_val (hash2), value));
+		ASSERT_FALSE (mdb_get (store.env.tx (transaction), store.open_blocks, badem::mdb_val (genesis.open->hash ()), value));
+
+		ASSERT_FALSE (mdb_dbi_open (store.env.tx (transaction), "accounts_v1", MDB_CREATE, &store.accounts_v1));
+		modify_account_info_to_v13 (store, transaction, badem::genesis_account, hash2);
+		store.account_del (transaction, badem::genesis_account);
 	}
 	badem::logger_mt logger;
-	badem::mdb_store store (error, logger, path);
+	badem::mdb_store store (logger, path);
 	badem::stat stat;
-	badem::ledger ledger (store, stat, 42, badem::test_genesis_key.pub);
+	badem::ledger ledger (store, stat);
 	ASSERT_FALSE (error);
 	auto transaction (store.tx_begin_write ());
 	ASSERT_TRUE (store.full_sideband (transaction));
@@ -1400,7 +1355,7 @@ TEST (mdb_block_store, upgrade_sideband_epoch)
 	badem::block_sideband sideband;
 	auto block1 (store.block_get (transaction, hash2, &sideband));
 	ASSERT_NE (0, sideband.height);
-	badem::state_block block2 (badem::test_genesis_key.pub, hash2, badem::test_genesis_key.pub, badem::genesis_amount - badem::kBDM_ratio, badem::test_genesis_key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, pool.generate (hash2));
+	badem::state_block block2 (badem::test_genesis_key.pub, hash2, badem::test_genesis_key.pub, badem::genesis_amount - badem::Gbdm_ratio, badem::test_genesis_key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (hash2));
 	ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, block2).code);
 	ASSERT_EQ (badem::epoch::epoch_1, store.block_version (transaction, block2.hash ()));
 }
@@ -1408,43 +1363,40 @@ TEST (mdb_block_store, upgrade_sideband_epoch)
 TEST (mdb_block_store, sideband_height)
 {
 	badem::logger_mt logger;
-	bool error (false);
 	badem::genesis genesis;
-	badem::keypair epoch_key;
 	badem::keypair key1;
 	badem::keypair key2;
 	badem::keypair key3;
-	badem::mdb_store store (error, logger, badem::unique_path ());
-	ASSERT_FALSE (error);
+	badem::mdb_store store (logger, badem::unique_path ());
+	ASSERT_FALSE (store.init_error ());
 	badem::stat stat;
 	badem::ledger ledger (store, stat);
-	ledger.epoch_signer = epoch_key.pub;
 	auto transaction (store.tx_begin_write ());
-	store.initialize (transaction, genesis);
+	store.initialize (transaction, genesis, ledger.rep_weights, ledger.cemented_count, ledger.block_count_cache);
 	badem::work_pool pool (std::numeric_limits<unsigned>::max ());
-	badem::send_block send (genesis.hash (), badem::test_genesis_key.pub, badem::genesis_amount - badem::kBDM_ratio, badem::test_genesis_key.prv, badem::test_genesis_key.pub, pool.generate (genesis.hash ()));
+	badem::send_block send (genesis.hash (), badem::test_genesis_key.pub, badem::genesis_amount - badem::Gbdm_ratio, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (genesis.hash ()));
 	ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, send).code);
-	badem::receive_block receive (send.hash (), send.hash (), badem::test_genesis_key.prv, badem::test_genesis_key.pub, pool.generate (send.hash ()));
+	badem::receive_block receive (send.hash (), send.hash (), badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (send.hash ()));
 	ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, receive).code);
-	badem::change_block change (receive.hash (), 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, pool.generate (receive.hash ()));
+	badem::change_block change (receive.hash (), 0, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (receive.hash ()));
 	ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, change).code);
-	badem::state_block state_send1 (badem::test_genesis_key.pub, change.hash (), 0, badem::genesis_amount - badem::kBDM_ratio, key1.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, pool.generate (change.hash ()));
+	badem::state_block state_send1 (badem::test_genesis_key.pub, change.hash (), 0, badem::genesis_amount - badem::Gbdm_ratio, key1.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (change.hash ()));
 	ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, state_send1).code);
-	badem::state_block state_send2 (badem::test_genesis_key.pub, state_send1.hash (), 0, badem::genesis_amount - 2 * badem::kBDM_ratio, key2.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, pool.generate (state_send1.hash ()));
+	badem::state_block state_send2 (badem::test_genesis_key.pub, state_send1.hash (), 0, badem::genesis_amount - 2 * badem::Gbdm_ratio, key2.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (state_send1.hash ()));
 	ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, state_send2).code);
-	badem::state_block state_send3 (badem::test_genesis_key.pub, state_send2.hash (), 0, badem::genesis_amount - 3 * badem::kBDM_ratio, key3.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, pool.generate (state_send2.hash ()));
+	badem::state_block state_send3 (badem::test_genesis_key.pub, state_send2.hash (), 0, badem::genesis_amount - 3 * badem::Gbdm_ratio, key3.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (state_send2.hash ()));
 	ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, state_send3).code);
-	badem::state_block state_open (key1.pub, 0, 0, badem::kBDM_ratio, state_send1.hash (), key1.prv, key1.pub, pool.generate (key1.pub));
+	badem::state_block state_open (key1.pub, 0, 0, badem::Gbdm_ratio, state_send1.hash (), key1.prv, key1.pub, *pool.generate (key1.pub));
 	ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, state_open).code);
-	badem::state_block epoch (key1.pub, state_open.hash (), 0, badem::kBDM_ratio, ledger.epoch_link, epoch_key.prv, epoch_key.pub, pool.generate (state_open.hash ()));
+	badem::state_block epoch (key1.pub, state_open.hash (), 0, badem::Gbdm_ratio, ledger.epoch_link (badem::epoch::epoch_1), badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (state_open.hash ()));
 	ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, epoch).code);
 	ASSERT_EQ (badem::epoch::epoch_1, store.block_version (transaction, epoch.hash ()));
-	badem::state_block epoch_open (key2.pub, 0, 0, 0, ledger.epoch_link, epoch_key.prv, epoch_key.pub, pool.generate (key2.pub));
+	badem::state_block epoch_open (key2.pub, 0, 0, 0, ledger.epoch_link (badem::epoch::epoch_1), badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (key2.pub));
 	ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, epoch_open).code);
 	ASSERT_EQ (badem::epoch::epoch_1, store.block_version (transaction, epoch_open.hash ()));
-	badem::state_block state_receive (key2.pub, epoch_open.hash (), 0, badem::kBDM_ratio, state_send2.hash (), key2.prv, key2.pub, pool.generate (epoch_open.hash ()));
+	badem::state_block state_receive (key2.pub, epoch_open.hash (), 0, badem::Gbdm_ratio, state_send2.hash (), key2.prv, key2.pub, *pool.generate (epoch_open.hash ()));
 	ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, state_receive).code);
-	badem::open_block open (state_send3.hash (), badem::test_genesis_key.pub, key3.pub, key3.prv, key3.pub, pool.generate (key3.pub));
+	badem::open_block open (state_send3.hash (), badem::test_genesis_key.pub, key3.pub, key3.prv, key3.pub, *pool.generate (key3.pub));
 	ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, open).code);
 	badem::block_sideband sideband1;
 	auto block1 (store.block_get (transaction, genesis.hash (), &sideband1));
@@ -1487,9 +1439,8 @@ TEST (mdb_block_store, sideband_height)
 TEST (block_store, peers)
 {
 	badem::logger_mt logger;
-	auto init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 
 	badem::endpoint_key endpoint (boost::asio::ip::address_v6::any ().to_bytes (), 100);
 	{
@@ -1586,9 +1537,8 @@ TEST (block_store, endpoint_key_byte_order)
 TEST (block_store, online_weight)
 {
 	badem::logger_mt logger;
-	bool error (false);
-	auto store = badem::make_store (error, logger, badem::unique_path ());
-	ASSERT_FALSE (error);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_FALSE (store->init_error ());
 	{
 		auto transaction (store->tx_begin_write ());
 		ASSERT_EQ (0, store->online_weight_count (transaction));
@@ -1616,17 +1566,19 @@ TEST (mdb_block_store, upgrade_v13_v14)
 	{
 		badem::logger_mt logger;
 		badem::genesis genesis;
-		auto error (false);
-		badem::mdb_store store (error, logger, path);
+		badem::mdb_store store (logger, path);
 		auto transaction (store.tx_begin_write ());
-		store.initialize (transaction, genesis);
+		badem::rep_weights rep_weights;
+		std::atomic<uint64_t> cemented_count{ 0 };
+		std::atomic<uint64_t> block_count_cache{ 0 };
+		store.initialize (transaction, genesis, rep_weights, cemented_count, block_count_cache);
 		badem::account_info account_info;
 		ASSERT_FALSE (store.account_get (transaction, badem::genesis_account, account_info));
 		uint64_t confirmation_height;
 		ASSERT_FALSE (store.confirmation_height_get (transaction, badem::genesis_account, confirmation_height));
 		ASSERT_EQ (confirmation_height, 1);
 		store.version_put (transaction, 13);
-		modify_account_info_to_v13 (store, transaction, badem::genesis_account);
+		modify_account_info_to_v13 (store, transaction, badem::genesis_account, genesis.open->hash ());
 
 		// This should fail as sizes are no longer correct for account_info_v14
 		badem::mdb_val value;
@@ -1638,7 +1590,7 @@ TEST (mdb_block_store, upgrade_v13_v14)
 	// Now do the upgrade
 	badem::logger_mt logger;
 	auto error (false);
-	badem::mdb_store store (error, logger, path);
+	badem::mdb_store store (logger, path);
 	ASSERT_FALSE (error);
 	auto transaction (store.tx_begin_read ());
 
@@ -1661,33 +1613,59 @@ TEST (mdb_block_store, upgrade_v13_v14)
 	ASSERT_LT (13, store.version_get (transaction));
 }
 
-// Extract confirmation height to a separate database
 TEST (mdb_block_store, upgrade_v14_v15)
 {
+	// Extract confirmation height to a separate database
 	auto path (badem::unique_path ());
+	badem::genesis genesis;
+	badem::network_params network_params;
+	badem::work_pool pool (std::numeric_limits<unsigned>::max ());
+	badem::send_block send (genesis.hash (), badem::test_genesis_key.pub, badem::genesis_amount - badem::Gbdm_ratio, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (genesis.hash ()));
+	badem::state_block epoch (badem::test_genesis_key.pub, send.hash (), badem::test_genesis_key.pub, badem::genesis_amount - badem::Gbdm_ratio, network_params.ledger.epochs.link (badem::epoch::epoch_1), badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (send.hash ()));
+	badem::state_block state_send (badem::test_genesis_key.pub, epoch.hash (), badem::test_genesis_key.pub, badem::genesis_amount - badem::Gbdm_ratio * 2, badem::test_genesis_key.pub, badem::test_genesis_key.prv, badem::test_genesis_key.pub, *pool.generate (epoch.hash ()));
 	{
 		badem::logger_mt logger;
-		badem::genesis genesis;
-		auto error (false);
-		badem::mdb_store store (error, logger, path);
+		badem::mdb_store store (logger, path);
+		badem::stat stats;
+		badem::ledger ledger (store, stats);
 		auto transaction (store.tx_begin_write ());
-		store.initialize (transaction, genesis);
+		store.initialize (transaction, genesis, ledger.rep_weights, ledger.cemented_count, ledger.block_count_cache);
 		badem::account_info account_info;
 		ASSERT_FALSE (store.account_get (transaction, badem::genesis_account, account_info));
 		uint64_t confirmation_height;
 		ASSERT_FALSE (store.confirmation_height_get (transaction, badem::genesis_account, confirmation_height));
 		ASSERT_EQ (confirmation_height, 1);
-
+		// These databases get remove after an upgrade, so readd them
+		ASSERT_FALSE (mdb_dbi_open (store.env.tx (transaction), "state_v1", MDB_CREATE, &store.state_blocks_v1));
+		ASSERT_FALSE (mdb_dbi_open (store.env.tx (transaction), "accounts_v1", MDB_CREATE, &store.accounts_v1));
+		ASSERT_FALSE (mdb_dbi_open (store.env.tx (transaction), "pending_v1", MDB_CREATE, &store.pending_v1));
+		ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, send).code);
+		ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, epoch).code);
+		ASSERT_EQ (badem::process_result::progress, ledger.process (transaction, state_send).code);
 		// Lower the database to the previous version
 		store.version_put (transaction, 14);
 		store.confirmation_height_del (transaction, badem::genesis_account);
-		modify_account_info_to_v14 (store, transaction, badem::genesis_account, confirmation_height);
+		modify_account_info_to_v14 (store, transaction, badem::genesis_account, confirmation_height, state_send.hash ());
+
+		store.pending_del (transaction, badem::pending_key (badem::genesis_account, state_send.hash ()));
+
+		write_sideband_v14 (store, transaction, state_send, store.state_blocks_v1);
+		write_sideband_v14 (store, transaction, epoch, store.state_blocks_v1);
+
+		// Remove from state table
+		store.block_del (transaction, state_send.hash ());
+		store.block_del (transaction, epoch.hash ());
+
+		// Turn pending into v14
+		ASSERT_FALSE (mdb_put (store.env.tx (transaction), store.pending_v0, badem::mdb_val (badem::pending_key (badem::test_genesis_key.pub, send.hash ())), badem::mdb_val (badem::pending_info_v14 (badem::genesis_account, badem::Gbdm_ratio, badem::epoch::epoch_0)), 0));
+		ASSERT_FALSE (mdb_put (store.env.tx (transaction), store.pending_v1, badem::mdb_val (badem::pending_key (badem::test_genesis_key.pub, state_send.hash ())), badem::mdb_val (badem::pending_info_v14 (badem::genesis_account, badem::Gbdm_ratio, badem::epoch::epoch_1)), 0));
 
 		// This should fail as sizes are no longer correct for account_info
 		badem::mdb_val value;
-		ASSERT_FALSE (mdb_get (store.env.tx (transaction), store.accounts_v0, badem::mdb_val (badem::genesis_account), value));
+		ASSERT_FALSE (mdb_get (store.env.tx (transaction), store.accounts_v1, badem::mdb_val (badem::genesis_account), value));
 		badem::account_info info;
 		ASSERT_NE (value.size (), info.db_size ());
+		store.account_del (transaction, badem::genesis_account);
 
 		// Confirmation height for the account should be deleted
 		ASSERT_TRUE (store.confirmation_height_get (transaction, badem::genesis_account, confirmation_height));
@@ -1696,14 +1674,14 @@ TEST (mdb_block_store, upgrade_v14_v15)
 	// Now do the upgrade
 	badem::logger_mt logger;
 	auto error (false);
-	badem::mdb_store store (error, logger, path);
+	badem::mdb_store store (logger, path);
 	ASSERT_FALSE (error);
 	auto transaction (store.tx_begin_read ());
 
 	// Size of account_info should now equal that set in db
 	badem::mdb_val value;
-	ASSERT_FALSE (mdb_get (store.env.tx (transaction), store.accounts_v0, badem::mdb_val (badem::genesis_account), value));
-	badem::account_info info;
+	ASSERT_FALSE (mdb_get (store.env.tx (transaction), store.accounts, badem::mdb_val (badem::genesis_account), value));
+	badem::account_info info (value);
 	ASSERT_EQ (value.size (), info.db_size ());
 
 	// Confirmation height should exist
@@ -1711,8 +1689,75 @@ TEST (mdb_block_store, upgrade_v14_v15)
 	ASSERT_FALSE (store.confirmation_height_get (transaction, badem::genesis_account, confirmation_height));
 	ASSERT_EQ (confirmation_height, 1);
 
+	// The representation table should be deleted
+	auto error_get_representation (mdb_get (store.env.tx (transaction), store.representation, badem::mdb_val (badem::genesis_account), value));
+	ASSERT_NE (error_get_representation, MDB_SUCCESS);
+	ASSERT_EQ (store.representation, 0);
+
+	// accounts_v1, state_blocks_v1 & pending_v1 tables should be deleted
+	auto error_get_accounts_v1 (mdb_get (store.env.tx (transaction), store.accounts_v1, badem::mdb_val (badem::genesis_account), value));
+	ASSERT_NE (error_get_accounts_v1, MDB_SUCCESS);
+	auto error_get_pending_v1 (mdb_get (store.env.tx (transaction), store.pending_v1, badem::mdb_val (badem::pending_key (badem::test_genesis_key.pub, state_send.hash ())), value));
+	ASSERT_NE (error_get_pending_v1, MDB_SUCCESS);
+	auto error_get_state_v1 (mdb_get (store.env.tx (transaction), store.state_blocks_v1, badem::mdb_val (state_send.hash ()), value));
+	ASSERT_NE (error_get_state_v1, MDB_SUCCESS);
+
+	// Check that the epochs are set correctly for the sideband, accounts and pending entries
+	badem::block_sideband sideband;
+	auto block = store.block_get (transaction, state_send.hash (), &sideband);
+	ASSERT_NE (block, nullptr);
+	ASSERT_EQ (sideband.epoch, badem::epoch::epoch_1);
+	block = store.block_get (transaction, send.hash (), &sideband);
+	ASSERT_NE (block, nullptr);
+	badem::block_sideband sideband1;
+	ASSERT_EQ (sideband1.epoch, badem::epoch::epoch_0);
+	ASSERT_EQ (info.epoch (), badem::epoch::epoch_1);
+	badem::pending_info pending_info;
+	store.pending_get (transaction, badem::pending_key (badem::test_genesis_key.pub, send.hash ()), pending_info);
+	ASSERT_EQ (pending_info.epoch, badem::epoch::epoch_0);
+	store.pending_get (transaction, badem::pending_key (badem::test_genesis_key.pub, state_send.hash ()), pending_info);
+	ASSERT_EQ (pending_info.epoch, badem::epoch::epoch_1);
+
 	// Version should be correct
 	ASSERT_LT (14, store.version_get (transaction));
+}
+
+TEST (mdb_block_store, upgrade_backup)
+{
+	auto dir (badem::unique_path ());
+	namespace fs = boost::filesystem;
+	fs::create_directory (dir);
+	auto path = dir / "data.ldb";
+	/** Returns 'dir' if backup file cannot be found */
+	// clang-format off
+	auto get_backup_path = [&dir]() {
+		for (fs::directory_iterator itr (dir); itr != fs::directory_iterator (); ++itr)
+		{
+			if (itr->path ().filename ().string ().find ("data_backup_") != std::string::npos)
+			{
+				return itr->path ();
+			}
+		}
+		return dir;
+	};
+	// clang-format on
+
+	{
+		badem::logger_mt logger;
+		badem::genesis genesis;
+		badem::mdb_store store (logger, path);
+		auto transaction (store.tx_begin_write ());
+		store.version_put (transaction, 14);
+	}
+	ASSERT_EQ (get_backup_path ().string (), dir.string ());
+
+	// Now do the upgrade and confirm that backup is saved
+	badem::logger_mt logger;
+	badem::mdb_store store (logger, path, badem::txn_tracking_config{}, std::chrono::seconds (5), 128, 512, true);
+	ASSERT_FALSE (store.init_error ());
+	auto transaction (store.tx_begin_read ());
+	ASSERT_LT (14, store.version_get (transaction));
+	ASSERT_NE (get_backup_path ().string (), dir.string ());
 }
 
 // Test various confirmation height values as well as clearing them
@@ -1720,8 +1765,7 @@ TEST (block_store, confirmation_height)
 {
 	auto path (badem::unique_path ());
 	badem::logger_mt logger;
-	auto error (false);
-	badem::mdb_store store (error, logger, path);
+	badem::mdb_store store (logger, path);
 
 	badem::account account1 (0);
 	badem::account account2 (1);
@@ -1755,7 +1799,7 @@ TEST (block_store, confirmation_height)
 }
 
 // Upgrade many accounts and check they all have a confirmation height of 0 (except genesis which should have 1)
-TEST (block_store, upgrade_confirmation_height_many)
+TEST (mdb_block_store, upgrade_confirmation_height_many)
 {
 	auto error (false);
 	badem::genesis genesis;
@@ -1764,29 +1808,34 @@ TEST (block_store, upgrade_confirmation_height_many)
 	auto path (badem::unique_path ());
 	{
 		badem::logger_mt logger;
-		badem::mdb_store store (error, logger, path);
+		badem::mdb_store store (logger, path);
 		ASSERT_FALSE (error);
 		auto transaction (store.tx_begin_write ());
 		store.version_put (transaction, 13);
-		store.initialize (transaction, genesis);
-		modify_account_info_to_v13 (store, transaction, badem::genesis_account);
+		badem::rep_weights rep_weights;
+		std::atomic<uint64_t> cemented_count{ 0 };
+		std::atomic<uint64_t> block_count_cache{ 0 };
+		store.initialize (transaction, genesis, rep_weights, cemented_count, block_count_cache);
+		modify_account_info_to_v13 (store, transaction, badem::genesis_account, genesis.open->hash ());
 
 		// Add many accounts
 		for (auto i = 0; i < total_num_accounts - 1; ++i)
 		{
 			badem::account account (i);
-			badem::open_block open (1, 2, 3, nullptr);
-			badem::account_info_v13 account_info_v13 (open.hash (), open.hash (), open.hash (), 3, 4, 1, badem::epoch::epoch_1);
-			auto status (mdb_put (store.env.tx (transaction), store.accounts_v1, badem::mdb_val (account), badem::mdb_val (account_info_v13), 0));
+			badem::open_block open (1, badem::genesis_account, 3, nullptr);
+			badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
+			store.block_put (transaction, open.hash (), open, sideband);
+			badem::account_info_v13 account_info_v13 (open.hash (), open.hash (), open.hash (), 3, 4, 1, badem::epoch::epoch_0);
+			auto status (mdb_put (store.env.tx (transaction), store.accounts_v0, badem::mdb_val (account), badem::mdb_val (account_info_v13), 0));
 			ASSERT_EQ (status, 0);
 		}
 
-		ASSERT_EQ (store.account_count (transaction), total_num_accounts);
+		ASSERT_EQ (store.count (transaction, store.accounts_v0), total_num_accounts);
 	}
 
 	// Loop over them all and confirm they all have the correct confirmation heights
 	badem::logger_mt logger;
-	badem::mdb_store store (error, logger, path);
+	badem::mdb_store store (logger, path);
 	auto transaction (store.tx_begin_read ());
 	ASSERT_EQ (store.account_count (transaction), total_num_accounts);
 	ASSERT_EQ (store.confirmation_height_count (transaction), total_num_accounts);
@@ -1803,33 +1852,34 @@ TEST (block_store, incompatible_version)
 	auto path (badem::unique_path ());
 	badem::logger_mt logger;
 	{
-		auto error (false);
-		auto store = badem::make_store (error, logger, path);
-		ASSERT_FALSE (error);
+		auto store = badem::make_store (logger, path);
+		ASSERT_FALSE (store->init_error ());
 
 		// Put version to an unreachable number so that it should always be incompatible
 		auto transaction (store->tx_begin_write ());
-		store->version_put (transaction, std::numeric_limits<unsigned>::max ());
+		store->version_put (transaction, std::numeric_limits<int>::max ());
 	}
 
 	// Now try and read it, should give an error
 	{
-		auto error (false);
-		auto store = badem::make_store (error, logger, path);
-		ASSERT_TRUE (error);
+		auto store = badem::make_store (logger, path, true);
+		ASSERT_TRUE (store->init_error ());
+
+		auto transaction = store->tx_begin_read ();
+		auto version_l = store->version_get (transaction);
+		ASSERT_EQ (version_l, std::numeric_limits<int>::max ());
 	}
 }
 
 TEST (block_store, reset_renew_existing_transaction)
 {
 	badem::logger_mt logger;
-	bool init (false);
-	auto store = badem::make_store (init, logger, badem::unique_path ());
-	ASSERT_TRUE (!init);
+	auto store = badem::make_store (logger, badem::unique_path ());
+	ASSERT_TRUE (!store->init_error ());
 
 	badem::keypair key1;
 	badem::open_block block (0, 1, 1, badem::keypair ().prv, 0, 0);
-	badem::uint256_union hash1 (block.hash ());
+	auto hash1 (block.hash ());
 	auto read_transaction = store->tx_begin_read ();
 
 	// Block shouldn't exist yet
@@ -1842,7 +1892,7 @@ TEST (block_store, reset_renew_existing_transaction)
 	// Write the block
 	{
 		auto write_transaction (store->tx_begin_write ());
-		badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0);
+		badem::block_sideband sideband (badem::block_type::open, 0, 0, 0, 0, 0, badem::epoch::epoch_0);
 		store->block_put (write_transaction, hash1, block, sideband);
 	}
 
@@ -1853,35 +1903,100 @@ TEST (block_store, reset_renew_existing_transaction)
 	ASSERT_NE (nullptr, block_existing);
 }
 
+TEST (block_store, rocksdb_force_test_env_variable)
+{
+	badem::logger_mt logger;
+
+	// Set environment variable
+	constexpr auto env_var = "TEST_USE_ROCKSDB";
+	auto value = std::getenv (env_var);
+	(void)value;
+
+	auto store = badem::make_store (logger, badem::unique_path ());
+
+	auto mdb_cast = dynamic_cast<badem::mdb_store *> (store.get ());
+
+#if BADEM_ROCKSDB
+	if (value && boost::lexical_cast<int> (value) == 1)
+	{
+		ASSERT_NE (boost::polymorphic_downcast<badem::rocksdb_store *> (store.get ()), nullptr);
+	}
+	else
+	{
+		ASSERT_NE (mdb_cast, nullptr);
+	}
+#else
+	ASSERT_NE (mdb_cast, nullptr);
+#endif
+}
+
 namespace
 {
+void write_sideband_v12 (badem::mdb_store & store_a, badem::transaction & transaction_a, badem::block & block_a, badem::block_hash const & successor_a, MDB_dbi db_a)
+{
+	std::vector<uint8_t> vector;
+	{
+		badem::vectorstream stream (vector);
+		block_a.serialize (stream);
+		badem::write (stream, successor_a);
+	}
+	MDB_val val{ vector.size (), vector.data () };
+	auto hash (block_a.hash ());
+	auto status (mdb_put (store_a.env.tx (transaction_a), db_a, badem::mdb_val (hash), &val, 0));
+	ASSERT_EQ (0, status);
+	badem::block_sideband_v14 sideband_v14;
+	auto block (store_a.block_get_v14 (transaction_a, hash, &sideband_v14));
+	ASSERT_NE (nullptr, block);
+	ASSERT_EQ (0, sideband_v14.height);
+};
+
+void write_sideband_v14 (badem::mdb_store & store_a, badem::transaction & transaction_a, badem::block const & block_a, MDB_dbi db_a)
+{
+	badem::block_sideband sideband;
+	auto block = store_a.block_get (transaction_a, block_a.hash (), &sideband);
+	ASSERT_NE (block, nullptr);
+
+	badem::block_sideband_v14 sideband_v14 (sideband.type, sideband.account, sideband.successor, sideband.balance, sideband.timestamp, sideband.height);
+	std::vector<uint8_t> data;
+	{
+		badem::vectorstream stream (data);
+		block_a.serialize (stream);
+		sideband_v14.serialize (stream);
+	}
+
+	MDB_val val{ data.size (), data.data () };
+	ASSERT_FALSE (mdb_put (store_a.env.tx (transaction_a), sideband.epoch == badem::epoch::epoch_0 ? store_a.state_blocks_v0 : store_a.state_blocks_v1, badem::mdb_val (block_a.hash ()), &val, 0));
+}
+
 // These functions take the latest account_info and create a legacy one so that upgrade tests can be emulated more easily.
-void modify_account_info_to_v13 (badem::mdb_store & store, badem::transaction const & transaction_a, badem::account const & account)
+void modify_account_info_to_v13 (badem::mdb_store & store, badem::transaction const & transaction, badem::account const & account, badem::block_hash const & rep_block)
 {
 	badem::account_info info;
-	ASSERT_FALSE (store.account_get (transaction_a, account, info));
-	badem::account_info_v13 account_info_v13 (info.head, info.rep_block, info.open_block, info.balance, info.modified, info.block_count, info.epoch);
-	auto status (mdb_put (store.env.tx (transaction_a), store.get_account_db (info.epoch) == badem::block_store_partial<MDB_val, badem::mdb_store>::tables::accounts_v0 ? store.accounts_v0 : store.accounts_v1, badem::mdb_val (account), badem::mdb_val (account_info_v13), 0));
+	ASSERT_FALSE (store.account_get (transaction, account, info));
+	badem::account_info_v13 account_info_v13 (info.head, rep_block, info.open_block, info.balance, info.modified, info.block_count, info.epoch ());
+	auto status (mdb_put (store.env.tx (transaction), (info.epoch () == badem::epoch::epoch_0) ? store.accounts_v0 : store.accounts_v1, badem::mdb_val (account), badem::mdb_val (account_info_v13), 0));
 	(void)status;
 	assert (status == 0);
 }
 
-void modify_account_info_to_v14 (badem::mdb_store & store, badem::transaction const & transaction_a, badem::account const & account, uint64_t confirmation_height)
+void modify_account_info_to_v14 (badem::mdb_store & store, badem::transaction const & transaction, badem::account const & account, uint64_t confirmation_height, badem::block_hash const & rep_block)
 {
 	badem::account_info info;
-	ASSERT_FALSE (store.account_get (transaction_a, account, info));
-	badem::account_info_v14 account_info_v14 (info.head, info.rep_block, info.open_block, info.balance, info.modified, info.block_count, confirmation_height, info.epoch);
-	auto status (mdb_put (store.env.tx (transaction_a), store.get_account_db (info.epoch) == badem::block_store_partial<MDB_val, badem::mdb_store>::tables::accounts_v0 ? store.accounts_v0 : store.accounts_v1, badem::mdb_val (account), badem::mdb_val (account_info_v14), 0));
+	ASSERT_FALSE (store.account_get (transaction, account, info));
+	badem::account_info_v14 account_info_v14 (info.head, rep_block, info.open_block, info.balance, info.modified, info.block_count, confirmation_height, info.epoch ());
+	auto status (mdb_put (store.env.tx (transaction), info.epoch () == badem::epoch::epoch_0 ? store.accounts_v0 : store.accounts_v1, badem::mdb_val (account), badem::mdb_val (account_info_v14), 0));
 	(void)status;
 	assert (status == 0);
 }
 
-void modify_genesis_account_info_to_v5 (badem::mdb_store & store, badem::transaction const & transaction_a)
+void modify_genesis_account_info_to_v5 (badem::mdb_store & store, badem::transaction const & transaction)
 {
 	badem::account_info info;
-	store.account_get (transaction_a, badem::test_genesis_key.pub, info);
-	badem::account_info_v5 info_old (info.head, info.rep_block, info.open_block, info.balance, info.modified);
-	auto status (mdb_put (store.env.tx (transaction_a), store.accounts_v0, badem::mdb_val (badem::test_genesis_key.pub), badem::mdb_val (sizeof (info_old), &info_old), 0));
+	store.account_get (transaction, badem::test_genesis_key.pub, info);
+	badem::representative_visitor visitor (transaction, store);
+	visitor.compute (info.head);
+	badem::account_info_v5 info_old (info.head, visitor.result, info.open_block, info.balance, info.modified);
+	auto status (mdb_put (store.env.tx (transaction), store.accounts_v0, badem::mdb_val (badem::test_genesis_key.pub), badem::mdb_val (sizeof (info_old), &info_old), 0));
 	(void)status;
 	assert (status == 0);
 }

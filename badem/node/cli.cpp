@@ -1,4 +1,5 @@
 #include <badem/lib/config.hpp>
+#include <badem/lib/tomlconfig.hpp>
 #include <badem/node/cli.hpp>
 #include <badem/node/common.hpp>
 #include <badem/node/daemonconfig.hpp>
@@ -7,6 +8,7 @@
 namespace
 {
 void reset_confirmation_heights (badem::block_store & store);
+bool is_using_rocksdb (boost::filesystem::path const & data_path, std::error_code & ec);
 }
 
 std::string badem::error_cli_messages::message (int ev) const
@@ -21,6 +23,12 @@ std::string badem::error_cli_messages::message (int ev) const
 			return "Invalid arguments";
 		case badem::error_cli::unknown_command:
 			return "Unknown command";
+		case badem::error_cli::database_write_error:
+			return "Database write error";
+		case badem::error_cli::reading_config:
+			return "Config file read error";
+		case badem::error_cli::disable_all_network:
+			return "Flags --disable_tcp_realtime and --disable_udp cannot be used together";
 	}
 
 	return "Invalid error code";
@@ -43,6 +51,7 @@ void badem::add_node_options (boost::program_options::options_description & desc
 	("unchecked_clear", "Clear unchecked blocks")
 	("confirmation_height_clear", "Clear confirmation height")
 	("diagnostics", "Run internal diagnostics")
+	("generate_config", boost::program_options::value<std::string> (), "Write configuration to stdout, populated with defaults suitable for this system. Pass the configuration type node or rpc. See also use_defaults.")
 	("key_create", "Generates a adhoc random keypair and prints it to stdout")
 	("key_expand", "Derive public key and account number from <key>")
 	("wallet_add_adhoc", "Insert <key> in to <wallet>")
@@ -62,8 +71,129 @@ void badem::add_node_options (boost::program_options::options_description & desc
 	("seed", boost::program_options::value<std::string> (), "Defines the <seed> for other commands, hex")
 	("password", boost::program_options::value<std::string> (), "Defines <password> for other commands")
 	("wallet", boost::program_options::value<std::string> (), "Defines <wallet> for other commands")
-	("force", boost::program_options::value<bool>(), "Bool to force command if allowed");
+	("force", boost::program_options::value<bool>(), "Bool to force command if allowed")
+	("use_defaults", "If present, the generate_config command will generate uncommented entries");
 	// clang-format on
+}
+
+void badem::add_node_flag_options (boost::program_options::options_description & description_a)
+{
+	// clang-format off
+	description_a.add_options()
+		("disable_backup", "Disable wallet automatic backups")
+		("disable_lazy_bootstrap", "Disables lazy bootstrap")
+		("disable_legacy_bootstrap", "Disables legacy bootstrap")
+		("disable_wallet_bootstrap", "Disables wallet lazy bootstrap")
+		("disable_bootstrap_listener", "Disables bootstrap processing for TCP listener (not including realtime network TCP connections)")
+		("disable_tcp_realtime", "Disables TCP realtime network")
+		("disable_udp", "Disables UDP realtime network")
+		("disable_unchecked_cleanup", "Disables periodic cleanup of old records from unchecked table")
+		("disable_unchecked_drop", "Disables drop of unchecked table at startup")
+		("fast_bootstrap", "Increase bootstrap speed for high end nodes with higher limits")
+		("batch_size", boost::program_options::value<std::size_t>(), "Increase sideband batch size, default 512")
+		("block_processor_batch_size", boost::program_options::value<std::size_t>(), "Increase block processor transaction batch write size, default 0 (limited by config block_processor_batch_max_time), 256k for fast_bootstrap")
+		("block_processor_full_size", boost::program_options::value<std::size_t>(), "Increase block processor allowed blocks queue size before dropping live network packets and holding bootstrap download, default 65536, 1 million for fast_bootstrap")
+		("block_processor_verification_size", boost::program_options::value<std::size_t>(), "Increase batch signature verification size in block processor, default 0 (limited by config signature_checker_threads), unlimited for fast_bootstrap");
+	// clang-format on
+}
+
+std::error_code badem::update_flags (badem::node_flags & flags_a, boost::program_options::variables_map const & vm)
+{
+	std::error_code ec;
+	auto batch_size_it = vm.find ("batch_size");
+	if (batch_size_it != vm.end ())
+	{
+		flags_a.sideband_batch_size = batch_size_it->second.as<size_t> ();
+	}
+	flags_a.disable_backup = (vm.count ("disable_backup") > 0);
+	flags_a.disable_lazy_bootstrap = (vm.count ("disable_lazy_bootstrap") > 0);
+	flags_a.disable_legacy_bootstrap = (vm.count ("disable_legacy_bootstrap") > 0);
+	flags_a.disable_wallet_bootstrap = (vm.count ("disable_wallet_bootstrap") > 0);
+	flags_a.disable_bootstrap_listener = (vm.count ("disable_bootstrap_listener") > 0);
+	flags_a.disable_tcp_realtime = (vm.count ("disable_tcp_realtime") > 0);
+	flags_a.disable_udp = (vm.count ("disable_udp") > 0);
+	if (flags_a.disable_tcp_realtime && flags_a.disable_udp)
+	{
+		ec = badem::error_cli::disable_all_network;
+	}
+	flags_a.disable_unchecked_cleanup = (vm.count ("disable_unchecked_cleanup") > 0);
+	flags_a.disable_unchecked_drop = (vm.count ("disable_unchecked_drop") > 0);
+	flags_a.fast_bootstrap = (vm.count ("fast_bootstrap") > 0);
+	if (flags_a.fast_bootstrap)
+	{
+		flags_a.block_processor_batch_size = 256 * 1024;
+		flags_a.block_processor_full_size = 1024 * 1024;
+		flags_a.block_processor_verification_size = std::numeric_limits<size_t>::max ();
+	}
+	auto block_processor_batch_size_it = vm.find ("block_processor_batch_size");
+	if (block_processor_batch_size_it != vm.end ())
+	{
+		flags_a.block_processor_batch_size = block_processor_batch_size_it->second.as<size_t> ();
+	}
+	auto block_processor_full_size_it = vm.find ("block_processor_full_size");
+	if (block_processor_full_size_it != vm.end ())
+	{
+		flags_a.block_processor_full_size = block_processor_full_size_it->second.as<size_t> ();
+	}
+	auto block_processor_verification_size_it = vm.find ("block_processor_verification_size");
+	if (block_processor_verification_size_it != vm.end ())
+	{
+		flags_a.block_processor_verification_size = block_processor_verification_size_it->second.as<size_t> ();
+	}
+	return ec;
+}
+
+namespace
+{
+void database_write_lock_error (std::error_code & ec)
+{
+	std::cerr << "Write database error, this cannot be run while the node is already running\n";
+	ec = badem::error_cli::database_write_error;
+}
+
+bool copy_database (boost::filesystem::path const & data_path, boost::program_options::variables_map & vm, boost::filesystem::path const & output_path, std::error_code & ec)
+{
+	bool success = false;
+	bool needs_to_write = vm.count ("unchecked_clear") || vm.count ("clear_send_ids") || vm.count ("online_weight_clear") || vm.count ("peer_clear") || vm.count ("confirmation_height_clear");
+
+	auto node_flags = badem::inactive_node_flag_defaults ();
+	node_flags.read_only = !needs_to_write;
+	badem::inactive_node node (data_path, 24000, node_flags);
+	if (!node.node->init_error ())
+	{
+		if (vm.count ("unchecked_clear"))
+		{
+			auto transaction (node.node->store.tx_begin_write ());
+			node.node->store.unchecked_clear (transaction);
+		}
+		if (vm.count ("clear_send_ids"))
+		{
+			auto transaction (node.node->wallets.tx_begin_write ());
+			node.node->wallets.clear_send_ids (transaction);
+		}
+		if (vm.count ("online_weight_clear"))
+		{
+			auto transaction (node.node->store.tx_begin_write ());
+			node.node->store.online_weight_clear (transaction);
+		}
+		if (vm.count ("peer_clear"))
+		{
+			auto transaction (node.node->store.tx_begin_write ());
+			node.node->store.peer_clear (transaction);
+		}
+		if (vm.count ("confirmation_height_clear"))
+		{
+			reset_confirmation_heights (node.node->store);
+		}
+
+		success = node.node->copy_with_compaction (output_path);
+	}
+	else
+	{
+		database_write_lock_error (ec);
+	}
+	return success;
+}
 }
 
 std::error_code badem::handle_node_options (boost::program_options::variables_map & vm)
@@ -75,7 +205,7 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 	{
 		if (vm.count ("wallet") == 1)
 		{
-			badem::uint256_union wallet_id;
+			badem::wallet_id wallet_id;
 			if (!wallet_id.decode_hex (vm["wallet"].as<std::string> ()))
 			{
 				std::string password;
@@ -121,7 +251,7 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 	{
 		if (vm.count ("key") == 1)
 		{
-			badem::uint256_union pub;
+			badem::account pub;
 			pub.decode_hex (vm["key"].as<std::string> ());
 			std::cout << "Account: " << pub.to_account () << std::endl;
 		}
@@ -135,7 +265,7 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 	{
 		if (vm.count ("account") == 1)
 		{
-			badem::uint256_union account;
+			badem::account account;
 			account.decode_account (vm["account"].as<std::string> ());
 			std::cout << "Hex: " << account.to_string () << std::endl;
 		}
@@ -149,53 +279,62 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 	{
 		try
 		{
-			auto vacuum_path = data_path / "vacuumed.ldb";
-			auto source_path = data_path / "data.ldb";
-			auto backup_path = data_path / "backup.vacuum.ldb";
-
-			std::cout << "Vacuuming database copy in " << data_path << std::endl;
-			std::cout << "This may take a while..." << std::endl;
-
-			// Scope the node so the mdb environment gets cleaned up properly before
-			// the original file is replaced with the vacuumed file.
-			bool success = false;
+			auto using_rocksdb = is_using_rocksdb (data_path, ec);
+			if (!ec)
 			{
-				inactive_node node (data_path);
-				if (vm.count ("unchecked_clear"))
+				std::cout << "Vacuuming database copy in ";
+				boost::filesystem::path source_path;
+				boost::filesystem::path backup_path;
+				boost::filesystem::path vacuum_path;
+				if (using_rocksdb)
 				{
-					auto transaction (node.node->store.tx_begin_write ());
-					node.node->store.unchecked_clear (transaction);
-				}
-				if (vm.count ("clear_send_ids"))
-				{
-					auto transaction (node.node->wallets.tx_begin_write ());
-					node.node->wallets.clear_send_ids (transaction);
-				}
-				if (vm.count ("online_weight_clear"))
-				{
-					auto transaction (node.node->store.tx_begin_write ());
-					node.node->store.online_weight_clear (transaction);
-				}
-				if (vm.count ("peer_clear"))
-				{
-					auto transaction (node.node->store.tx_begin_write ());
-					node.node->store.peer_clear (transaction);
-				}
-				success = node.node->copy_with_compaction (vacuum_path);
-			}
+					source_path = data_path / "rocksdb";
+					backup_path = source_path / "backup";
+					vacuum_path = backup_path / "vacuumed";
+					if (!boost::filesystem::exists (vacuum_path))
+					{
+						boost::filesystem::create_directories (vacuum_path);
+					}
 
-			if (success)
-			{
-				// Note that these throw on failure
-				std::cout << "Finalizing" << std::endl;
-				boost::filesystem::remove (backup_path);
-				boost::filesystem::rename (source_path, backup_path);
-				boost::filesystem::rename (vacuum_path, source_path);
-				std::cout << "Vacuum completed" << std::endl;
+					std::cout << source_path << "\n";
+				}
+				else
+				{
+					source_path = data_path / "data.ldb";
+					backup_path = data_path / "backup.vacuum.ldb";
+					vacuum_path = data_path / "vacuumed.ldb";
+					std::cout << data_path << "\n";
+				}
+				std::cout << "This may take a while..." << std::endl;
+
+				bool success = copy_database (data_path, vm, vacuum_path, ec);
+				if (success)
+				{
+					// Note that these throw on failure
+					std::cout << "Finalizing" << std::endl;
+					if (using_rocksdb)
+					{
+						badem::remove_all_files_in_dir (backup_path);
+						badem::move_all_files_to_dir (source_path, backup_path);
+						badem::move_all_files_to_dir (vacuum_path, source_path);
+						boost::filesystem::remove_all (vacuum_path);
+					}
+					else
+					{
+						boost::filesystem::remove (backup_path);
+						boost::filesystem::rename (source_path, backup_path);
+						boost::filesystem::rename (vacuum_path, source_path);
+					}
+					std::cout << "Vacuum completed" << std::endl;
+				}
+				else
+				{
+					std::cerr << "Vacuum failed (copying returned false)" << std::endl;
+				}
 			}
 			else
 			{
-				std::cerr << "Vacuum failed (copy_with_compaction returned false)" << std::endl;
+				std::cerr << "Vacuum failed. RocksDB is enabled but the node has not been built with RocksDB support" << std::endl;
 			}
 		}
 		catch (const boost::filesystem::filesystem_error & ex)
@@ -211,51 +350,38 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 	{
 		try
 		{
-			boost::filesystem::path data_path = vm.count ("data_path") ? boost::filesystem::path (vm["data_path"].as<std::string> ()) : badem::working_path ();
-
-			auto source_path = data_path / "data.ldb";
-			auto snapshot_path = data_path / "snapshot.ldb";
-
-			std::cout << "Database snapshot of " << source_path << " to " << snapshot_path << " in progress" << std::endl;
-			std::cout << "This may take a while..." << std::endl;
-
-			bool success = false;
+			auto using_rocksdb = is_using_rocksdb (data_path, ec);
+			if (!ec)
 			{
-				inactive_node node (data_path);
-				if (vm.count ("unchecked_clear"))
+				boost::filesystem::path source_path;
+				boost::filesystem::path snapshot_path;
+				if (using_rocksdb)
 				{
-					auto transaction (node.node->store.tx_begin_write ());
-					node.node->store.unchecked_clear (transaction);
+					source_path = data_path / "rocksdb";
+					snapshot_path = source_path / "backup";
 				}
-				if (vm.count ("clear_send_ids"))
+				else
 				{
-					auto transaction (node.node->wallets.tx_begin_write ());
-					node.node->wallets.clear_send_ids (transaction);
-				}
-				if (vm.count ("online_weight_clear"))
-				{
-					auto transaction (node.node->store.tx_begin_write ());
-					node.node->store.online_weight_clear (transaction);
-				}
-				if (vm.count ("peer_clear"))
-				{
-					auto transaction (node.node->store.tx_begin_write ());
-					node.node->store.peer_clear (transaction);
-				}
-				if (vm.count ("confirmation_height_clear"))
-				{
-					reset_confirmation_heights (node.node->store);
+					source_path = data_path / "data.ldb";
+					snapshot_path = data_path / "snapshot.ldb";
 				}
 
-				success = node.node->copy_with_compaction (snapshot_path);
-			}
-			if (success)
-			{
-				std::cout << "Snapshot completed, This can be found at " << snapshot_path << std::endl;
+				std::cout << "Database snapshot of " << source_path << " to " << snapshot_path << " in progress" << std::endl;
+				std::cout << "This may take a while..." << std::endl;
+
+				bool success = copy_database (data_path, vm, snapshot_path, ec);
+				if (success)
+				{
+					std::cout << "Snapshot completed, This can be found at " << snapshot_path << std::endl;
+				}
+				else
+				{
+					std::cerr << "Snapshot failed (copying returned false)" << std::endl;
+				}
 			}
 			else
 			{
-				std::cerr << "Snapshot Failed (copy_with_compaction returned false)" << std::endl;
+				std::cerr << "Snapshot failed. RocksDB is enabled but the node has not been built with RocksDB support" << std::endl;
 			}
 		}
 		catch (const boost::filesystem::filesystem_error & ex)
@@ -264,102 +390,177 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 		}
 		catch (...)
 		{
-			std::cerr << "Snapshot Failed (unknown reason)" << std::endl;
+			std::cerr << "Snapshot failed (unknown reason)" << std::endl;
 		}
 	}
 	else if (vm.count ("unchecked_clear"))
 	{
 		boost::filesystem::path data_path = vm.count ("data_path") ? boost::filesystem::path (vm["data_path"].as<std::string> ()) : badem::working_path ();
-		inactive_node node (data_path);
-		auto transaction (node.node->store.tx_begin_write ());
-		node.node->store.unchecked_clear (transaction);
-		std::cout << "Unchecked blocks deleted" << std::endl;
+		auto node_flags = badem::inactive_node_flag_defaults ();
+		node_flags.read_only = false;
+		badem::inactive_node node (data_path, 24000, node_flags);
+		if (!node.node->init_error ())
+		{
+			auto transaction (node.node->store.tx_begin_write ());
+			node.node->store.unchecked_clear (transaction);
+			std::cout << "Unchecked blocks deleted" << std::endl;
+		}
+		else
+		{
+			database_write_lock_error (ec);
+		}
 	}
 	else if (vm.count ("clear_send_ids"))
 	{
 		boost::filesystem::path data_path = vm.count ("data_path") ? boost::filesystem::path (vm["data_path"].as<std::string> ()) : badem::working_path ();
-		inactive_node node (data_path);
-		auto transaction (node.node->wallets.tx_begin_write ());
-		node.node->wallets.clear_send_ids (transaction);
-		std::cout << "Send IDs deleted" << std::endl;
+		auto node_flags = badem::inactive_node_flag_defaults ();
+		node_flags.read_only = false;
+		badem::inactive_node node (data_path, 24000, node_flags);
+		if (!node.node->init_error ())
+		{
+			auto transaction (node.node->wallets.tx_begin_write ());
+			node.node->wallets.clear_send_ids (transaction);
+			std::cout << "Send IDs deleted" << std::endl;
+		}
+		else
+		{
+			database_write_lock_error (ec);
+		}
 	}
 	else if (vm.count ("online_weight_clear"))
 	{
 		boost::filesystem::path data_path = vm.count ("data_path") ? boost::filesystem::path (vm["data_path"].as<std::string> ()) : badem::working_path ();
-		inactive_node node (data_path);
-		auto transaction (node.node->store.tx_begin_write ());
-		node.node->store.online_weight_clear (transaction);
-		std::cout << "Onine weight records are removed" << std::endl;
+		auto node_flags = badem::inactive_node_flag_defaults ();
+		node_flags.read_only = false;
+		badem::inactive_node node (data_path, 24000, node_flags);
+		if (!node.node->init_error ())
+		{
+			auto transaction (node.node->store.tx_begin_write ());
+			node.node->store.online_weight_clear (transaction);
+			std::cout << "Onine weight records are removed" << std::endl;
+		}
+		else
+		{
+			database_write_lock_error (ec);
+		}
 	}
 	else if (vm.count ("peer_clear"))
 	{
 		boost::filesystem::path data_path = vm.count ("data_path") ? boost::filesystem::path (vm["data_path"].as<std::string> ()) : badem::working_path ();
-		inactive_node node (data_path);
-		auto transaction (node.node->store.tx_begin_write ());
-		node.node->store.peer_clear (transaction);
-		std::cout << "Database peers are removed" << std::endl;
+		auto node_flags = badem::inactive_node_flag_defaults ();
+		node_flags.read_only = false;
+		badem::inactive_node node (data_path, 24000, node_flags);
+		if (!node.node->init_error ())
+		{
+			auto transaction (node.node->store.tx_begin_write ());
+			node.node->store.peer_clear (transaction);
+			std::cout << "Database peers are removed" << std::endl;
+		}
+		else
+		{
+			database_write_lock_error (ec);
+		}
 	}
 	else if (vm.count ("confirmation_height_clear"))
 	{
 		boost::filesystem::path data_path = vm.count ("data_path") ? boost::filesystem::path (vm["data_path"].as<std::string> ()) : badem::working_path ();
-		inactive_node node (data_path);
-		auto account_it = vm.find ("account");
-		if (account_it != vm.cend ())
+		auto node_flags = badem::inactive_node_flag_defaults ();
+		node_flags.read_only = false;
+		badem::inactive_node node (data_path, 24000, node_flags);
+		if (!node.node->init_error ())
 		{
-			auto account_str = account_it->second.as<std::string> ();
-			badem::account account;
-			if (!account.decode_account (account_str))
+			auto account_it = vm.find ("account");
+			if (account_it != vm.cend ())
 			{
-				uint64_t confirmation_height;
-				auto transaction (node.node->store.tx_begin_read ());
-				if (!node.node->store.confirmation_height_get (transaction, account, confirmation_height))
+				auto account_str = account_it->second.as<std::string> ();
+				badem::account account;
+				if (!account.decode_account (account_str))
 				{
-					auto transaction (node.node->store.tx_begin_write ());
-					auto conf_height_reset_num = 0;
-					if (account == node.node->network_params.ledger.genesis_account)
+					uint64_t confirmation_height;
+					auto transaction (node.node->store.tx_begin_read ());
+					if (!node.node->store.confirmation_height_get (transaction, account, confirmation_height))
 					{
-						conf_height_reset_num = 1;
-						node.node->store.confirmation_height_put (transaction, account, confirmation_height);
+						auto transaction (node.node->store.tx_begin_write ());
+						auto conf_height_reset_num = 0;
+						if (account == node.node->network_params.ledger.genesis_account)
+						{
+							conf_height_reset_num = 1;
+							node.node->store.confirmation_height_put (transaction, account, confirmation_height);
+						}
+						else
+						{
+							node.node->store.confirmation_height_clear (transaction, account, confirmation_height);
+						}
+
+						std::cout << "Confirmation height of account " << account_str << " is set to " << conf_height_reset_num << std::endl;
 					}
 					else
 					{
-						node.node->store.confirmation_height_clear (transaction, account, confirmation_height);
+						std::cerr << "Could not find account" << std::endl;
+						ec = badem::error_cli::generic;
 					}
-
-					std::cout << "Confirmation height of account " << account_str << " is set to " << conf_height_reset_num << std::endl;
 				}
 				else
 				{
-					std::cerr << "Could not find account" << std::endl;
-					ec = badem::error_cli::generic;
+					std::cerr << "Invalid account id\n";
+					ec = badem::error_cli::invalid_arguments;
 				}
 			}
 			else
 			{
-				std::cerr << "Invalid account id\n";
-				ec = badem::error_cli::invalid_arguments;
+				reset_confirmation_heights (node.node->store);
+				std::cout << "Confirmation heights of all accounts (except genesis which is set to 1) are set to 0" << std::endl;
 			}
 		}
 		else
 		{
-			reset_confirmation_heights (node.node->store);
-			std::cout << "Confirmation heights of all accounts (except genesis) are set to 0" << std::endl;
+			database_write_lock_error (ec);
+		}
+	}
+	else if (vm.count ("generate_config"))
+	{
+		auto type = vm["generate_config"].as<std::string> ();
+		badem::tomlconfig toml;
+		bool valid_type = false;
+		if (type == "node")
+		{
+			valid_type = true;
+			badem::daemon_config config (data_path);
+			config.serialize_toml (toml);
+		}
+		else if (type == "rpc")
+		{
+			valid_type = true;
+			badem::rpc_config config (false);
+			config.serialize_toml (toml);
+		}
+		else
+		{
+			std::cerr << "Invalid configuration type " << type << ". Must be node or rpc." << std::endl;
+		}
+
+		if (valid_type)
+		{
+			std::cout << "# This is an example configuration file for Badem. Visit https://docs.nano.org/running-a-node/configuration/ for more information.\n#\n"
+			          << "# Fields may need to be defined in the context of a [category] above them.\n"
+			          << "# The desired configuration changes should be placed in config-" << type << ".toml in the node data path.\n"
+			          << "# To change a value from its default, uncomment (erasing #) the corresponding field.\n"
+			          << "# It is not recommended to uncomment every field, as the default value for important fields may change in the future. Only change what you need.\n"
+			          << "# Additional information for notable configuration options is available in https://docs.nano.org/running-a-node/configuration/#notable-configuration-options\n";
+
+			if (vm.count ("use_defaults"))
+			{
+				std::cout << toml.to_string () << std::endl;
+			}
+			else
+			{
+				std::cout << toml.to_string_commented_entries () << std::endl;
+			}
 		}
 	}
 	else if (vm.count ("diagnostics"))
 	{
 		inactive_node node (data_path);
-
-		// Check/upgrade the config.json file.
-		{
-			badem::daemon_config config (data_path);
-			auto error = badem::read_and_update_daemon_config (data_path, config);
-			if (error)
-			{
-				std::cerr << "Error deserializing config: " << error.get_message () << std::endl;
-			}
-		}
-
 		std::cout << "Testing hash function" << std::endl;
 		badem::raw_key key;
 		key.data.clear ();
@@ -397,9 +598,9 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 	{
 		if (vm.count ("key") == 1)
 		{
-			badem::uint256_union prv;
+			badem::private_key prv;
 			prv.decode_hex (vm["key"].as<std::string> ());
-			badem::uint256_union pub (badem::pub_key (prv));
+			badem::public_key pub (badem::pub_key (prv));
 			std::cout << "Private: " << prv.to_string () << std::endl
 			          << "Public: " << pub.to_string () << std::endl
 			          << "Account: " << pub.to_account () << std::endl;
@@ -414,7 +615,7 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 	{
 		if (vm.count ("wallet") == 1 && vm.count ("key") == 1)
 		{
-			badem::uint256_union wallet_id;
+			badem::wallet_id wallet_id;
 			if (!wallet_id.decode_hex (vm["wallet"].as<std::string> ()))
 			{
 				std::string password;
@@ -468,7 +669,7 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 	{
 		if (vm.count ("wallet") == 1 && (vm.count ("seed") == 1 || vm.count ("key") == 1))
 		{
-			badem::uint256_union wallet_id;
+			badem::wallet_id wallet_id;
 			if (!wallet_id.decode_hex (vm["wallet"].as<std::string> ()))
 			{
 				std::string password;
@@ -559,8 +760,8 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 		if (!ec)
 		{
 			inactive_node node (data_path);
-			badem::keypair wallet_key;
-			auto wallet (node.node->wallets.create (wallet_key.pub));
+			auto wallet_key = badem::random_wallet_id ();
+			auto wallet (node.node->wallets.create (wallet_key));
 			if (wallet != nullptr)
 			{
 				if (vm.count ("password") > 0)
@@ -579,7 +780,7 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 					auto transaction (wallet->wallets.tx_begin_write ());
 					wallet->change_seed (transaction, seed_key);
 				}
-				std::cout << wallet_key.pub.to_string () << std::endl;
+				std::cout << wallet_key.to_string () << std::endl;
 			}
 			else
 			{
@@ -597,7 +798,7 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 			{
 				password = vm["password"].as<std::string> ();
 			}
-			badem::uint256_union wallet_id;
+			badem::wallet_id wallet_id;
 			if (!wallet_id.decode_hex (vm["wallet"].as<std::string> ()))
 			{
 				inactive_node node (data_path);
@@ -618,7 +819,7 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 							(void)error;
 							assert (!error);
 							std::cout << boost::str (boost::format ("Pub: %1% Prv: %2%\n") % account.to_account () % key.data.to_string ());
-							if (badem::pub_key (key.data) != account)
+							if (badem::pub_key (key.as_private_key ()) != account)
 							{
 								std::cerr << boost::str (boost::format ("Invalid private key %1%\n") % key.data.to_string ());
 							}
@@ -652,7 +853,7 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 	{
 		if (vm.count ("wallet") == 1)
 		{
-			badem::uint256_union wallet_id;
+			badem::wallet_id wallet_id;
 			if (!wallet_id.decode_hex (vm["wallet"].as<std::string> ()))
 			{
 				inactive_node node (data_path);
@@ -701,7 +902,7 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 				}
 				if (vm.count ("wallet") == 1)
 				{
-					badem::uint256_union wallet_id;
+					badem::wallet_id wallet_id;
 					if (!wallet_id.decode_hex (vm["wallet"].as<std::string> ()))
 					{
 						inactive_node node (data_path);
@@ -746,7 +947,7 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 							{
 								bool error (true);
 								{
-									std::lock_guard<std::mutex> lock (node.node->wallets.mutex);
+									badem::lock_guard<std::mutex> lock (node.node->wallets.mutex);
 									auto transaction (node.node->wallets.tx_begin_write ());
 									badem::wallet wallet (error, transaction, node.node->wallets, wallet_id.to_string (), contents.str ());
 								}
@@ -758,7 +959,7 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 								else
 								{
 									node.node->wallets.reload ();
-									std::lock_guard<std::mutex> lock (node.node->wallets.mutex);
+									badem::lock_guard<std::mutex> lock (node.node->wallets.mutex);
 									release_assert (node.node->wallets.items.find (wallet_id) != node.node->wallets.items.end ());
 									std::cout << "Import completed\n";
 								}
@@ -798,7 +999,7 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 			auto transaction (i->second->wallets.tx_begin_read ());
 			for (auto j (i->second->store.begin (transaction)), m (i->second->store.end ()); j != m; ++j)
 			{
-				std::cout << badem::uint256_union (j->first).to_account () << '\n';
+				std::cout << badem::account (j->first).to_account () << '\n';
 			}
 		}
 	}
@@ -807,7 +1008,7 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 		if (vm.count ("wallet") == 1 && vm.count ("account") == 1)
 		{
 			inactive_node node (data_path);
-			badem::uint256_union wallet_id;
+			badem::wallet_id wallet_id;
 			if (!wallet_id.decode_hex (vm["wallet"].as<std::string> ()))
 			{
 				auto wallet (node.node->wallets.items.find (wallet_id));
@@ -856,7 +1057,7 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 	{
 		if (vm.count ("wallet") == 1)
 		{
-			badem::uint256_union wallet_id;
+			badem::wallet_id wallet_id;
 			if (!wallet_id.decode_hex (vm["wallet"].as<std::string> ()))
 			{
 				inactive_node node (data_path);
@@ -891,7 +1092,7 @@ std::error_code badem::handle_node_options (boost::program_options::variables_ma
 		{
 			if (vm.count ("account") == 1)
 			{
-				badem::uint256_union wallet_id;
+				badem::wallet_id wallet_id;
 				if (!wallet_id.decode_hex (vm["wallet"].as<std::string> ()))
 				{
 					badem::account account;
@@ -963,5 +1164,28 @@ void reset_confirmation_heights (badem::block_store & store)
 	// Then make sure the confirmation height of the genesis account open block is 1
 	badem::network_params network_params;
 	store.confirmation_height_put (transaction, network_params.ledger.genesis_account, 1);
+}
+
+bool is_using_rocksdb (boost::filesystem::path const & data_path, std::error_code & ec)
+{
+	badem::daemon_config config (data_path);
+	auto error = badem::read_node_config_toml (data_path, config);
+	if (!error)
+	{
+		bool use_rocksdb = config.node.rocksdb_config.enable;
+		if (use_rocksdb)
+		{
+#if !BADEM_ROCKSDB
+			ec = badem::error_cli::database_write_error;
+#endif
+			return (BADEM_ROCKSDB == 1);
+		}
+	}
+	else
+	{
+		ec = badem::error_cli::reading_config;
+	}
+
+	return false;
 }
 }
