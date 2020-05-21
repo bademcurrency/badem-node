@@ -11,9 +11,9 @@ using uint256_t = boost::multiprecision::uint256_t;
 using uint512_t = boost::multiprecision::uint512_t;
 // SI dividers
 badem::uint128_t const Gbdm_ratio = badem::uint128_t ("1000000000000000000000000000000000"); // 10^33
-badem::uint128_t const Mbdm_ratio = badem::uint128_t ("1000000000000000000000000000000"); // 10^30
-badem::uint128_t const kbdm_ratio = badem::uint128_t ("1000000000000000000000000000"); // 10^27
-badem::uint128_t const bdm_ratio = badem::uint128_t ("1000000000000000000000000"); // 10^24
+badem::uint128_t const Mbdm_ratio = badem::uint128_t ("100000000000000000000000000000000"); // 10^32
+badem::uint128_t const kbdm_ratio = badem::uint128_t ("1000000000000000000000000000000"); // 10^30
+badem::uint128_t const bdm_ratio = badem::uint128_t ("1000000000000000000000000000"); // 10^27
 badem::uint128_t const raw_ratio = badem::uint128_t ("1"); // 10^0
 
 class uint128_union
